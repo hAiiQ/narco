@@ -6,7 +6,8 @@ Ein vollständiges, responsives Mitarbeiter- und Verwaltungsportal für die Tequ
 
 ## Funktionen
 
-- Registrierung und Login mit sicheren, gehashten Passwörtern
+- Registrierung mit IC-Vorname, IC-Nachname, IC-Geburtsdatum, Geschlecht und sicherem Passwort
+- Login über den vollständigen Narco-City-Ingame-Namen
 - Der erste registrierte Account wird automatisch freigeschalteter Admin
 - Alle weiteren Accounts müssen von einem Admin bestätigt werden
 - Mitarbeiterprofile mit Name, Rolle, Alter, Geburtsdatum, Aufgabenbereich, Info und Profilbild

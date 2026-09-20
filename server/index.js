@@ -11,6 +11,7 @@ import { newDb } from 'pg-mem';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { randomUUID } from 'node:crypto';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const rootDir = path.resolve(__dirname, '..');
@@ -104,11 +105,29 @@ const asyncRoute = (handler) => (req, res, next) => Promise.resolve(handler(req,
 const intValue = (value, fallback = 0) => Number.isFinite(Number(value)) ? Math.trunc(Number(value)) : fallback;
 const optionalInt = (value) => value === null || value === '' || value === undefined ? null : intValue(value, null);
 const trimmed = (value, max = 500) => String(value ?? '').trim().slice(0, max);
+const icNamePattern = /^[\p{L}][\p{L}\p{M}' -]{1,79}$/u;
+
+function validBirthDate(value) {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== value || date > new Date()) return null;
+  return date;
+}
+
+function ageFromBirthDate(date) {
+  const today = new Date();
+  let age = today.getUTCFullYear() - date.getUTCFullYear();
+  const beforeBirthday = today.getUTCMonth() < date.getUTCMonth()
+    || (today.getUTCMonth() === date.getUTCMonth() && today.getUTCDate() < date.getUTCDate());
+  if (beforeBirthday) age -= 1;
+  return Math.max(0, age);
+}
 
 async function currentUser(userId) {
   if (!userId) return null;
   const { rows } = await pool.query(`
-    SELECT u.id, u.username, u.email, u.display_name, u.age, u.birth_date, u.task_area,
+    SELECT u.id, u.username, u.display_name, u.first_name, u.last_name, u.gender,
+           u.age, u.birth_date, u.task_area,
            u.about, u.role_id, u.avatar_asset_id, u.submission_target, u.is_admin,
            u.is_approved, r.name AS role_name, r.color AS role_color
     FROM users u LEFT JOIN roles r ON r.id = u.role_id
@@ -137,16 +156,22 @@ const requireAdmin = asyncRoute(async (req, res, next) => {
 app.get('/api/health', (_req, res) => res.json({ ok: true }));
 
 app.post('/api/auth/register', authLimiter, asyncRoute(async (req, res) => {
-  const username = trimmed(req.body.username, 40);
-  const email = trimmed(req.body.email, 255).toLowerCase();
-  const displayName = trimmed(req.body.displayName, 100);
+  const firstName = trimmed(req.body.firstName, 80);
+  const lastName = trimmed(req.body.lastName, 80);
+  const displayName = `${firstName} ${lastName}`.trim();
+  const username = displayName;
+  const email = `account-${randomUUID()}@narco.local`;
+  const birthDate = trimmed(req.body.birthDate, 10);
+  const parsedBirthDate = validBirthDate(birthDate);
+  const gender = String(req.body.gender || '');
   const password = String(req.body.password || '');
 
-  if (!/^[a-zA-Z0-9_.-]{3,40}$/.test(username)) {
-    return res.status(400).json({ error: 'Der Benutzername braucht 3–40 erlaubte Zeichen.' });
+  if (!icNamePattern.test(firstName) || !icNamePattern.test(lastName)) {
+    return res.status(400).json({ error: 'Bitte gib einen gültigen IC-Vor- und Nachnamen ein.' });
   }
-  if (!/^\S+@\S+\.\S+$/.test(email)) return res.status(400).json({ error: 'Bitte gib eine gültige E-Mail-Adresse ein.' });
-  if (displayName.length < 2) return res.status(400).json({ error: 'Bitte gib deinen Namen ein.' });
+  if (displayName.length > 100) return res.status(400).json({ error: 'Der vollständige IC-Name ist zu lang.' });
+  if (!parsedBirthDate) return res.status(400).json({ error: 'Bitte gib ein gültiges IC-Geburtsdatum ein.' });
+  if (!['male', 'female'].includes(gender)) return res.status(400).json({ error: 'Bitte wähle männlich oder weiblich.' });
   if (password.length < 8 || password.length > 128) return res.status(400).json({ error: 'Das Passwort muss mindestens 8 Zeichen haben.' });
 
   const client = await pool.connect();
@@ -158,10 +183,12 @@ app.post('/api/auth/register', authLimiter, asyncRoute(async (req, res) => {
     const ownerRole = isFirst ? await client.query("SELECT id FROM roles WHERE name = 'Inhaber' LIMIT 1") : { rows: [] };
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await client.query(`
-      INSERT INTO users (username, email, password_hash, display_name, role_id, is_approved, is_admin)
-      VALUES ($1, $2, $3, $4, $5, $6, $6)
+      INSERT INTO users (username, email, password_hash, display_name, first_name, last_name,
+                         gender, birth_date, age, role_id, is_approved, is_admin)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
       RETURNING id, username, display_name, is_approved, is_admin
-    `, [username, email, passwordHash, displayName, ownerRole.rows[0]?.id || null, isFirst]);
+    `, [username, email, passwordHash, displayName, firstName, lastName, gender, birthDate,
+      ageFromBirthDate(parsedBirthDate), ownerRole.rows[0]?.id || null, isFirst]);
     await client.query('COMMIT');
 
     if (isFirst) {
@@ -171,7 +198,7 @@ app.post('/api/auth/register', authLimiter, asyncRoute(async (req, res) => {
     res.status(201).json({ pending: true, message: 'Dein Account wartet auf die Freigabe durch einen Admin.' });
   } catch (error) {
     await client.query('ROLLBACK');
-    if (error.code === '23505') return res.status(409).json({ error: 'Benutzername oder E-Mail-Adresse ist bereits vergeben.' });
+    if (error.code === '23505') return res.status(409).json({ error: 'Dieser Narco-City-Name ist bereits registriert.' });
     throw error;
   } finally {
     client.release();
@@ -179,7 +206,7 @@ app.post('/api/auth/register', authLimiter, asyncRoute(async (req, res) => {
 }));
 
 app.post('/api/auth/login', authLimiter, asyncRoute(async (req, res) => {
-  const login = trimmed(req.body.login, 255).toLowerCase();
+  const login = trimmed(req.body.login, 160).toLowerCase();
   const password = String(req.body.password || '');
   const { rows } = await pool.query('SELECT * FROM users WHERE LOWER(username) = $1 OR LOWER(email) = $1 LIMIT 1', [login]);
   const user = rows[0];
@@ -234,7 +261,8 @@ app.get('/api/dashboard', requireAuth, asyncRoute(async (req, res) => {
 
 app.get('/api/staff', requireAuth, asyncRoute(async (_req, res) => {
   const { rows } = await pool.query(`
-    SELECT u.id, u.display_name, u.age, u.birth_date, u.task_area, u.about, u.avatar_asset_id,
+    SELECT u.id, u.display_name, u.first_name, u.last_name, u.gender, u.age, u.birth_date,
+           u.task_area, u.about, u.avatar_asset_id,
            r.name AS role_name, r.color AS role_color
     FROM users u LEFT JOIN roles r ON r.id = u.role_id
     WHERE u.is_approved = TRUE
@@ -307,7 +335,8 @@ app.get('/api/events', requireAuth, asyncRoute(async (_req, res) => {
 
 app.get('/api/admin/overview', requireAdmin, asyncRoute(async (_req, res) => {
   const [users, roles, submissions, inventory, menu, events, finance] = await Promise.all([
-    pool.query(`SELECT u.id, u.username, u.email, u.display_name, u.age, u.birth_date, u.task_area, u.about,
+    pool.query(`SELECT u.id, u.username, u.display_name, u.first_name, u.last_name, u.gender,
+                       u.age, u.birth_date, u.task_area, u.about,
                        u.role_id, u.avatar_asset_id, u.submission_target, u.is_approved, u.is_admin, u.created_at,
                        r.name AS role_name, r.color AS role_color
                 FROM users u LEFT JOIN roles r ON r.id = u.role_id ORDER BY u.created_at DESC`),
@@ -342,16 +371,29 @@ app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const userId = intValue(req.params.id);
   const isAdmin = Boolean(req.body.isAdmin);
   const isApproved = Boolean(req.body.isApproved);
+  const firstName = trimmed(req.body.firstName, 80);
+  const lastName = trimmed(req.body.lastName, 80);
+  const displayName = `${firstName} ${lastName}`.trim();
+  const birthDate = trimmed(req.body.birthDate, 10);
+  const parsedBirthDate = validBirthDate(birthDate);
+  const gender = String(req.body.gender || '');
   if (userId === req.user.id && (!isAdmin || !isApproved)) {
     return res.status(400).json({ error: 'Du kannst dir deine eigenen Adminrechte nicht entziehen.' });
   }
+  if (!icNamePattern.test(firstName) || !icNamePattern.test(lastName)) {
+    return res.status(400).json({ error: 'Bitte gib einen gültigen IC-Vor- und Nachnamen ein.' });
+  }
+  if (displayName.length > 100) return res.status(400).json({ error: 'Der vollständige IC-Name ist zu lang.' });
+  if (!parsedBirthDate) return res.status(400).json({ error: 'Bitte gib ein gültiges IC-Geburtsdatum ein.' });
+  if (!['male', 'female'].includes(gender)) return res.status(400).json({ error: 'Bitte wähle männlich oder weiblich.' });
   const { rows } = await pool.query(`
-    UPDATE users SET display_name = $1, age = $2, birth_date = $3, task_area = $4, about = $5,
-      role_id = $6, avatar_asset_id = $7, submission_target = $8, is_approved = $9, is_admin = $10
-    WHERE id = $11
+    UPDATE users SET username = $1, display_name = $1, first_name = $2, last_name = $3,
+      gender = $4, age = $5, birth_date = $6, task_area = $7, about = $8,
+      role_id = $9, avatar_asset_id = $10, submission_target = $11, is_approved = $12, is_admin = $13
+    WHERE id = $14
     RETURNING id, display_name, is_approved, is_admin
   `, [
-    trimmed(req.body.displayName, 100), optionalInt(req.body.age), req.body.birthDate || null,
+    displayName, firstName, lastName, gender, ageFromBirthDate(parsedBirthDate), birthDate,
     trimmed(req.body.taskArea, 500), trimmed(req.body.about, 1200), optionalInt(req.body.roleId),
     optionalInt(req.body.avatarAssetId), Math.max(0, intValue(req.body.submissionTarget)),
     isApproved, isAdmin, userId,

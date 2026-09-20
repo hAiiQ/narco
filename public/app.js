@@ -74,6 +74,10 @@ function formatDate(value, options = { dateStyle: 'medium' }) {
   return Number.isNaN(date.getTime()) ? 'Nicht angegeben' : new Intl.DateTimeFormat('de-DE', options).format(date);
 }
 
+function genderText(value) {
+  return value === 'male' ? 'Männlich' : value === 'female' ? 'Weiblich' : 'Nicht angegeben';
+}
+
 function inputDate(value) {
   if (!value) return '';
   const date = new Date(value);
@@ -146,7 +150,7 @@ function toggleAuthMode() {
   els.loginForm.hidden = registering;
   els.authTitle.textContent = registering ? 'Crew beitreten' : 'Willkommen zurück';
   els.authCopy.textContent = registering
-    ? 'Erstelle deinen Account. Ein Admin schaltet ihn anschließend frei.'
+    ? 'Registriere dich mit deinen Narco-City-IC-Daten. Ein Admin schaltet dich anschließend frei.'
     : 'Melde dich mit deinem freigeschalteten Account an.';
   els.authSwitch.textContent = registering ? 'Schon registriert? Anmelden' : 'Noch kein Account? Registrieren';
   els.authMessage.textContent = '';
@@ -312,7 +316,7 @@ function renderStaff(data) {
               <span class="role-badge" style="--role:${roleColor}">${escapeHtml(person.role_name || 'Crew')}</span>
               <h3>${escapeHtml(person.display_name)}</h3>
               <p>${escapeHtml(person.task_area || person.about || 'Aufgabenbereich wird noch ergänzt.')}</p>
-              <div class="staff-card__meta"><span>${person.age ? `${formatNumber(person.age)} Jahre` : 'Alter offen'}</span><span>${person.birth_date ? `Geb. ${formatDate(person.birth_date)}` : 'Geburtsdatum offen'}</span></div>
+              <div class="staff-card__meta"><span>${person.age !== null && person.age !== undefined ? `${formatNumber(person.age)} Jahre` : 'Alter offen'}</span><span>${escapeHtml(genderText(person.gender))}</span><span>${person.birth_date ? `Geb. ${formatDate(person.birth_date)}` : 'Geburtsdatum offen'}</span></div>
             </div>
           </article>`;
         }).join('') : emptyState('◎', 'Noch keine Crew sichtbar', 'Freigeschaltete Accounts erscheinen automatisch hier.')}
@@ -473,7 +477,7 @@ function adminUsers() {
   const d = state.adminData;
   return `<div class="panel"><div class="panel__head"><h3>Accounts</h3><span class="muted">${d.users.length} gesamt</span></div><div class="panel__body admin-list">
     ${d.users.map((user) => `<div class="admin-row">
-      <div class="admin-row__name"><div class="mini-avatar" style="--role:${color(user.role_color)};${avatarStyle(user.avatar_asset_id)}">${user.avatar_asset_id ? '' : escapeHtml(initials(user.display_name))}</div><div><strong>${escapeHtml(user.display_name)}</strong><span>@${escapeHtml(user.username)} · ${escapeHtml(user.email)}</span></div></div>
+      <div class="admin-row__name"><div class="mini-avatar" style="--role:${color(user.role_color)};${avatarStyle(user.avatar_asset_id)}">${user.avatar_asset_id ? '' : escapeHtml(initials(user.display_name))}</div><div><strong>${escapeHtml(user.display_name)}</strong><span>${escapeHtml(genderText(user.gender))} · IC-Geburtstag: ${escapeHtml(formatDate(user.birth_date))}</span></div></div>
       <span class="role-badge" style="--role:${color(user.role_color)}">${escapeHtml(user.role_name || 'Keine Rolle')}</span>
       <span class="status-badge status-badge--${user.is_approved ? 'approved' : 'pending'}">${user.is_approved ? 'Freigegeben' : 'Wartet'}</span>
       <div class="admin-row__actions"><button class="button button--small" data-edit="user" data-id="${user.id}">Bearbeiten</button>${Number(user.id) !== Number(state.user.id) ? `<button class="button button--small button--danger" data-delete="user" data-id="${user.id}">Löschen</button>` : ''}</div>
@@ -564,10 +568,11 @@ function openEditor(type, id) {
 function userEditor(user) {
   openModal('Account bearbeiten', `<form id="editor-form" data-type="user" data-id="${user.id}">
     <div class="form-grid form-grid--two">
-      <label>Name<input name="displayName" required value="${escapeHtml(user.display_name)}" /></label>
+      <label>IC Vorname<input name="firstName" required value="${escapeHtml(user.first_name || user.display_name?.split(' ')[0] || '')}" /></label>
+      <label>IC Nachname<input name="lastName" required value="${escapeHtml(user.last_name || user.display_name?.split(' ').slice(1).join(' ') || '')}" /></label>
+      <label>IC Geburtsdatum<input name="birthDate" type="date" required value="${user.birth_date ? new Date(user.birth_date).toISOString().slice(0, 10) : ''}" /></label>
+      <label>Geschlecht<select name="gender" required><option value="male" ${user.gender === 'male' ? 'selected' : ''}>Männlich</option><option value="female" ${user.gender === 'female' ? 'selected' : ''}>Weiblich</option></select></label>
       <label>Rolle<select name="roleId"><option value="">Keine Rolle</option>${state.adminData.roles.map((role) => `<option value="${role.id}" ${Number(role.id) === Number(user.role_id) ? 'selected' : ''}>${escapeHtml(role.name)}</option>`).join('')}</select></label>
-      <label>Alter<input name="age" type="number" min="0" max="120" value="${user.age ?? ''}" /></label>
-      <label>Geburtsdatum<input name="birthDate" type="date" value="${user.birth_date ? new Date(user.birth_date).toISOString().slice(0, 10) : ''}" /></label>
       <label>Abgabe-Ziel<input name="submissionTarget" type="number" min="0" value="${Number(user.submission_target || 0)}" /></label>
       <label>Profilbild<input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
     </div>

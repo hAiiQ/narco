@@ -31,8 +31,8 @@
           <p id="auth-copy" class="muted">Melde dich mit deinem freigeschalteten Account an.</p>
 
           <form id="login-form" class="stack-form">
-            <label>Benutzername oder E-Mail
-              <input name="login" autocomplete="username" required placeholder="dein.name" />
+            <label>Narco City Ingame-Name
+              <input name="login" autocomplete="username" required placeholder="Vorname Nachname" />
             </label>
             <label>Passwort
               <input name="password" type="password" autocomplete="current-password" required placeholder="Mindestens 8 Zeichen" />
@@ -42,16 +42,25 @@
 
           <form id="register-form" class="stack-form" hidden>
             <div class="form-grid form-grid--two">
-              <label>Name
-                <input name="displayName" autocomplete="name" required placeholder="Vor- und Nachname" />
+              <label>IC Vorname
+                <input name="firstName" autocomplete="given-name" required placeholder="Vorname" />
               </label>
-              <label>Benutzername
-                <input name="username" autocomplete="username" required placeholder="dein.name" />
+              <label>IC Nachname
+                <input name="lastName" autocomplete="family-name" required placeholder="Nachname" />
               </label>
             </div>
-            <label>E-Mail
-              <input name="email" type="email" autocomplete="email" required placeholder="name@beispiel.de" />
-            </label>
+            <div class="form-grid form-grid--two">
+              <label>IC Geburtsdatum
+                <input name="birthDate" type="date" autocomplete="bday" required />
+              </label>
+              <label>Geschlecht
+                <select name="gender" required>
+                  <option value="" selected disabled>Bitte wählen</option>
+                  <option value="male">Männlich</option>
+                  <option value="female">Weiblich</option>
+                </select>
+              </label>
+            </div>
             <label>Passwort
               <input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Mindestens 8 Zeichen" />
             </label>
