@@ -691,6 +691,10 @@ function bindEditorForm() {
   els.modalRoot.querySelector('#editor-form').addEventListener('submit', saveEditor);
 }
 
+function adminEndpoint(type) {
+  return ({ user: 'users', role: 'roles', campaign: 'campaigns' })[type] || type;
+}
+
 async function uploadImage(file) {
   if (!file || !file.size) return null;
   const form = new FormData();
@@ -721,7 +725,7 @@ async function saveEditor(event) {
       values.endsAt = new Date(values.endsAt).toISOString();
     }
     const id = form.dataset.id;
-    const endpointType = type === 'user' ? 'users' : type;
+    const endpointType = adminEndpoint(type);
     const method = id ? 'PUT' : 'POST';
     await api(`/api/admin/${endpointType}${id ? `/${id}` : ''}`, { method, body: values });
     closeModal();
@@ -735,7 +739,7 @@ async function saveEditor(event) {
 
 async function removeItem(type, id) {
   if (!window.confirm('Diesen Eintrag wirklich löschen?')) return;
-  const endpointType = type === 'user' ? 'users' : type;
+  const endpointType = adminEndpoint(type);
   try {
     await api(`/api/admin/${endpointType}/${id}`, { method: 'DELETE' });
     toast('Eintrag gelöscht.');
