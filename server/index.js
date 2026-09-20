@@ -8,6 +8,7 @@ import { rateLimit } from 'express-rate-limit';
 import multer from 'multer';
 import pg from 'pg';
 import { newDb } from 'pg-mem';
+import sharp from 'sharp';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -106,6 +107,37 @@ const intValue = (value, fallback = 0) => Number.isFinite(Number(value)) ? Math.
 const optionalInt = (value) => value === null || value === '' || value === undefined ? null : intValue(value, null);
 const trimmed = (value, max = 500) => String(value ?? '').trim().slice(0, max);
 const icNamePattern = /^[\p{L}][\p{L}\p{M}' -]{1,79}$/u;
+const optimizedImageLimit = 650 * 1024;
+
+async function optimizeImage(file) {
+  const attempts = [
+    { size: 1600, quality: 78 },
+    { size: 1400, quality: 70 },
+    { size: 1200, quality: 62 },
+    { size: 1000, quality: 54 },
+  ];
+  let smallest = null;
+  for (const attempt of attempts) {
+    const output = await sharp(file.buffer, { animated: false, limitInputPixels: 40_000_000 })
+      .rotate()
+      .resize({
+        width: attempt.size,
+        height: attempt.size,
+        fit: 'inside',
+        withoutEnlargement: true,
+      })
+      .webp({ quality: attempt.quality, effort: 4, smartSubsample: true })
+      .toBuffer();
+    if (!smallest || output.length < smallest.length) smallest = output;
+    if (output.length <= optimizedImageLimit) break;
+  }
+  const originalBaseName = path.parse(path.basename(file.originalname)).name || 'bild';
+  return {
+    buffer: smallest,
+    fileName: `${trimmed(originalBaseName, 240)}.webp`,
+    mimeType: 'image/webp',
+  };
+}
 
 function validBirthDate(value) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
@@ -425,10 +457,21 @@ app.get('/api/admin/overview', requireAdmin, asyncRoute(async (_req, res) => {
 
 app.post('/api/admin/assets', requireAdmin, upload.single('image'), asyncRoute(async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'Bitte wähle ein Bild aus.' });
+  let optimized;
+  try {
+    optimized = await optimizeImage(req.file);
+  } catch {
+    return res.status(400).json({ error: 'Das Bild konnte nicht verarbeitet werden. Bitte verwende eine gültige Bilddatei.' });
+  }
   const { rows } = await pool.query(`
     INSERT INTO assets (file_name, mime_type, data) VALUES ($1, $2, $3) RETURNING id
-  `, [trimmed(req.file.originalname, 255), req.file.mimetype, req.file.buffer.toString('base64')]);
-  res.status(201).json({ id: rows[0].id, url: `/api/assets/${rows[0].id}` });
+  `, [optimized.fileName, optimized.mimeType, optimized.buffer.toString('base64')]);
+  res.status(201).json({
+    id: rows[0].id,
+    url: `/api/assets/${rows[0].id}`,
+    originalBytes: req.file.size,
+    storedBytes: optimized.buffer.length,
+  });
 }));
 
 app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {

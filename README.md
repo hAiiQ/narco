@@ -21,18 +21,21 @@ Ein vollständiges, responsives Mitarbeiter- und Verwaltungsportal für die Tequ
 - Eventübersicht mit Termin, Ort, Beschreibung und Bild
 - Vollständiger Adminbereich für Accounts, Rollen, Abgaben und alle Inhalte
 - Rollen können frei hinzugefügt, bearbeitet und entfernt werden
+- Neue Bild-Uploads werden automatisch verkleinert und platzsparend als WebP gespeichert
 - Optimiert für Desktop, Tablet und Smartphone
 
 ## Auf Render veröffentlichen
 
-1. Dieses Repository zu GitHub pushen.
-2. Oben auf **Deploy to Render** klicken oder in Render **New → Blueprint** wählen.
-3. Das Repository `hAiiQ/narco` verbinden und den Blueprint anwenden.
-4. Nach dem ersten Start den IC-Account `Michael Black` registrieren. Dieser Account erhält automatisch Adminrechte und kann anschließend die Rollen der übrigen Crew vergeben.
+1. Bei [Neon](https://neon.com/) ein kostenloses PostgreSQL-Projekt erstellen und die **Pooled connection string** kopieren.
+2. Dieses Repository zu GitHub pushen.
+3. Oben auf **Deploy to Render** klicken oder in Render **New → Blueprint** wählen.
+4. Das Repository `hAiiQ/narco` verbinden und den Blueprint anwenden.
+5. Für die abgefragte Variable `DATABASE_URL` die Neon-Verbindungsadresse eintragen. Bei einem bereits vorhandenen Render-Service muss sie unter **Environment** manuell ersetzt und anschließend **Save and deploy** gewählt werden.
+6. Nach dem ersten Start den IC-Account `Michael Black` registrieren. Dieser Account erhält automatisch Adminrechte und kann anschließend die Rollen der übrigen Crew vergeben.
 
-Die Datei `render.yaml` erstellt den Webservice und die PostgreSQL-Datenbank inklusive aller benötigten Umgebungsvariablen. Bilder werden direkt in PostgreSQL gespeichert und gehen deshalb bei einem Neustart des Webservices nicht verloren.
+Die Datei `render.yaml` erstellt nur den kostenlosen Webservice. Die Datenbank liegt dauerhaft getrennt bei Neon. Bilder werden automatisch komprimiert und anschließend direkt in PostgreSQL gespeichert.
 
-> Hinweis: Kostenlose Render-PostgreSQL-Datenbanken laufen laut Render nach 30 Tagen ab. Für einen dauerhaften Live-Betrieb sollte die Datenbank rechtzeitig auf einen bezahlten Tarif umgestellt werden.
+> Wichtig: Beim Wechsel der `DATABASE_URL` startet die neue Datenbank zunächst leer. Eine bisherige Render-Datenbank wird durch die Blueprint-Änderung nicht automatisch gelöscht und kann bei Bedarf vorher migriert werden.
 
 ## Lokal starten
 
