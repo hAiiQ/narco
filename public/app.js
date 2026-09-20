@@ -119,7 +119,7 @@ function avatarStyle(assetId) {
 }
 
 async function api(url, options = {}) {
-  const config = { credentials: 'same-origin', ...options };
+  const config = { credentials: 'same-origin', cache: 'no-store', ...options };
   if (config.body && !(config.body instanceof FormData)) {
     config.headers = { 'Content-Type': 'application/json', ...(config.headers || {}) };
     if (typeof config.body !== 'string') config.body = JSON.stringify(config.body);
@@ -391,17 +391,14 @@ function renderProgress(data) {
     ? progress.filter((entry) => Number(entry.campaign_id) === Number(currentCampaign.id))
     : [];
   const own = currentEntries.find((entry) => Number(entry.id) === Number(state.user.id));
-  const actions = `<div class="progress-actions">
-    <button class="button button--primary" id="open-submission-modal" ${currentCampaign ? '' : 'disabled'}>Abgabe eintragen</button>
-    <button class="button button--ghost" id="open-history-modal">Vorherige Abgaben${previousCampaigns.length ? ` · ${previousCampaigns.length}` : ''}</button>
-  </div>`;
+  const actions = `<div class="progress-actions"><button class="button button--ghost" id="open-history-modal">Vorherige Abgaben${previousCampaigns.length ? ` · ${previousCampaigns.length}` : ''}</button></div>`;
   els.content.innerHTML = `
     <section class="page-section">
       ${sectionHead('Aktuelle Abgabe', currentCampaign ? 'Fortschritt der gesamten Crew im laufenden Zeitraum' : 'Derzeit ist kein Abgabezeitraum aktiv', actions)}
       ${currentCampaign ? `
         <article class="panel current-campaign">
           <div><p class="eyebrow">${escapeHtml(resourceLabel(currentCampaign.resource_type, currentCampaign.item_name))}</p><h3>${escapeHtml(currentCampaign.name)}</h3><span>${formatDate(currentCampaign.starts_at)} – ${formatDate(currentCampaign.ends_at)}</span></div>
-          <div class="current-campaign__target"><span>Dein bestätigter Stand</span><strong>${formatContribution(own?.approved_amount || 0, currentCampaign.resource_type, currentCampaign.item_name)} / ${formatContribution(currentCampaign.target_amount, currentCampaign.resource_type, currentCampaign.item_name)}</strong></div>
+          <div class="current-campaign__target"><span>Dein bestätigter Stand</span><strong>${formatContribution(own?.approved_amount || 0, currentCampaign.resource_type, currentCampaign.item_name)} / ${formatContribution(currentCampaign.target_amount, currentCampaign.resource_type, currentCampaign.item_name)}</strong><button class="button button--primary" id="open-submission-modal">Abgabe abgeben</button></div>
         </article>
         <section class="campaign-block campaign-block--current">
           <div class="campaign-block__head"><div><p class="eyebrow">Crew-Fortschritt</p><h3>Alle Mitarbeiter</h3></div><span>${currentEntries.length} Personen</span></div>
@@ -443,14 +440,26 @@ function openSubmissionModal(campaign) {
 
 function openContributionHistory(campaigns, progress) {
   openModal('Vorherige Abgaben', `<div class="history-modal">
-    ${campaigns.length ? campaigns.map((campaign) => {
-      const entries = progress.filter((entry) => Number(entry.campaign_id) === Number(campaign.id));
-      return `<section class="history-campaign">
-        <div class="campaign-block__head"><div><p class="eyebrow">${escapeHtml(resourceLabel(campaign.resource_type, campaign.item_name))}</p><h3>${escapeHtml(campaign.name)}</h3></div><span>${formatDate(campaign.starts_at)} – ${formatDate(campaign.ends_at)}</span></div>
-        ${progressCards(entries)}
-      </section>`;
-    }).join('') : emptyState('↗', 'Noch keine vorherigen Abgaben', 'Abgeschlossene Zeiträume erscheinen später automatisch hier.')}
+    ${campaigns.length ? `<div class="history-list">${campaigns.map((campaign) => `<article class="history-row">
+      <div><p class="eyebrow">${escapeHtml(resourceLabel(campaign.resource_type, campaign.item_name))}</p><h3>${escapeHtml(campaign.name)}</h3><span>${formatDate(campaign.starts_at)} – ${formatDate(campaign.ends_at)}</span></div>
+      <strong>${formatContribution(campaign.target_amount, campaign.resource_type, campaign.item_name)}</strong>
+      <button class="button button--small" data-history-info="${campaign.id}">Info</button>
+    </article>`).join('')}</div>` : emptyState('↗', 'Noch keine vorherigen Abgaben', 'Abgeschlossene Zeiträume erscheinen später automatisch hier.')}
   </div>`, true);
+  els.modalRoot.querySelectorAll('[data-history-info]').forEach((button) => button.addEventListener('click', () => {
+    const campaign = campaigns.find((entry) => Number(entry.id) === Number(button.dataset.historyInfo));
+    if (campaign) openContributionDetails(campaign, campaigns, progress);
+  }));
+}
+
+function openContributionDetails(campaign, campaigns, progress) {
+  const entries = progress.filter((entry) => Number(entry.campaign_id) === Number(campaign.id));
+  openModal(campaign.name, `<div class="history-modal history-detail">
+    <div class="campaign-block__head"><div><p class="eyebrow">${escapeHtml(resourceLabel(campaign.resource_type, campaign.item_name))}</p><h3>Fortschritt aller Mitarbeiter</h3></div><span>${formatDate(campaign.starts_at)} – ${formatDate(campaign.ends_at)}</span></div>
+    ${progressCards(entries)}
+    <div class="modal__actions"><button class="button button--ghost" type="button" data-history-back>Zurück zu vorherigen Abgaben</button></div>
+  </div>`, true);
+  els.modalRoot.querySelector('[data-history-back]').addEventListener('click', () => openContributionHistory(campaigns, progress));
 }
 
 function statusText(status) {

@@ -183,6 +183,7 @@ input:hover, textarea:hover, select:hover { border-color: rgba(255,255,255,.28);
 .current-campaign__target { min-width: 260px; text-align: right; }
 .current-campaign__target span, .current-campaign__target strong { display: block; }
 .current-campaign__target strong { margin-top: 5px; color: var(--lime); font-size: 1.08rem; }
+.current-campaign__target .button { margin-top: 14px; }
 .campaign-block { margin-top: 26px; }
 .campaign-block--current { margin-top: 22px; }
 .campaign-block__head { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin-bottom: 11px; }
@@ -268,6 +269,12 @@ input:hover, textarea:hover, select:hover { border-color: rgba(255,255,255,.28);
 .submission-modal__campaign small { color: var(--muted); }
 .history-modal { display: grid; gap: 24px; padding: 20px; }
 .history-campaign + .history-campaign { padding-top: 24px; border-top: 1px solid var(--line); }
+.history-list { display: grid; gap: 9px; }
+.history-row { display: grid; grid-template-columns: minmax(0,1fr) minmax(150px,.4fr) auto; align-items: center; gap: 18px; padding: 16px; border: 1px solid var(--line); background: rgba(255,255,255,.018); }
+.history-row h3 { margin: 3px 0 5px; font-size: 1rem; }
+.history-row p { margin: 0; }
+.history-row span { color: var(--muted); font-size: .74rem; }
+.history-row > strong { color: var(--lime); text-align: right; }
 .checkbox { display: flex; align-items: center; gap: 9px; min-height: 48px; padding: 10px 12px; border: 1px solid var(--line); }
 .checkbox input { width: 18px; min-height: 18px; }
 .modal__actions { display: flex; justify-content: flex-end; gap: 9px; padding-top: 6px; }
@@ -338,6 +345,9 @@ input:hover, textarea:hover, select:hover { border-color: rgba(255,255,255,.28);
   .campaign-block__head { align-items: start; flex-direction: column; gap: 5px; }
   .progress-actions { width: 100%; justify-content: stretch; }
   .progress-actions .button { flex: 1 1 180px; }
+  .history-row { grid-template-columns: 1fr auto; }
+  .history-row > strong { grid-column: 1; text-align: left; }
+  .history-row > .button { grid-column: 2; grid-row: 1 / 3; }
   .progress-card { grid-template-columns: 1fr; gap: 15px; }
   .progress-value { grid-column: 1; text-align: left; }
   .activity-row { grid-template-columns: 1fr auto; }
