@@ -357,7 +357,8 @@ app.get('/api/submissions', requireRole, asyncRoute(async (req, res) => {
     SELECT s.id, s.amount, s.note, s.status, s.submitted_at, s.reviewed_at,
            s.inventory_item_id, s.campaign_id, u.id AS user_id, u.display_name,
            reviewer.display_name AS reviewer_name, item.name AS item_name,
-           c.name AS campaign_name, c.resource_type, c.target_amount, c.starts_at, c.ends_at
+           c.name AS campaign_name, COALESCE(s.resource_type, c.resource_type) AS resource_type,
+           c.target_amount, c.starts_at, c.ends_at
     FROM submissions s
     JOIN users u ON u.id = s.user_id
     LEFT JOIN users reviewer ON reviewer.id = s.reviewed_by
@@ -385,10 +386,11 @@ app.post('/api/submissions', requireRole, asyncRoute(async (req, res) => {
     return res.status(409).json({ error: 'Dem Abgabezeitraum fehlt der Inventarartikel.' });
   }
   const { rows } = await pool.query(`
-    INSERT INTO submissions (user_id, campaign_id, inventory_item_id, amount, note)
-    VALUES ($1, $2, $3, $4, $5)
-    RETURNING id, campaign_id, inventory_item_id, amount, note, status, submitted_at
-  `, [req.user.id, campaign.rows[0].id, campaign.rows[0].inventory_item_id, amount, note]);
+    INSERT INTO submissions (user_id, campaign_id, inventory_item_id, resource_type, amount, note)
+    VALUES ($1, $2, $3, $4, $5, $6)
+    RETURNING id, campaign_id, inventory_item_id, resource_type, amount, note, status, submitted_at
+  `, [req.user.id, campaign.rows[0].id, campaign.rows[0].inventory_item_id,
+    campaign.rows[0].resource_type, amount, note]);
   res.status(201).json({ submission: {
     ...rows[0],
     campaign_name: campaign.rows[0].name,
@@ -431,7 +433,9 @@ app.get('/api/admin/overview', requireAdmin, asyncRoute(async (_req, res) => {
                 LEFT JOIN inventory_items item ON item.id = c.inventory_item_id
                 ORDER BY c.starts_at DESC, c.created_at DESC`),
     pool.query(`SELECT s.*, u.display_name, item.name AS item_name,
-                       c.name AS campaign_name, c.resource_type, c.target_amount,
+                       c.name AS campaign_name,
+                       COALESCE(s.resource_type, c.resource_type) AS resource_type,
+                       c.target_amount,
                        c.starts_at, c.ends_at
                 FROM submissions s
                 JOIN users u ON u.id = s.user_id
@@ -570,63 +574,140 @@ app.put('/api/admin/campaigns/:id', requireAdmin, asyncRoute(async (req, res) =>
 
 app.delete('/api/admin/campaigns/:id', requireAdmin, asyncRoute(async (req, res) => {
   const campaignId = intValue(req.params.id);
-  const linked = await pool.query('SELECT COUNT(*)::int AS count FROM submissions WHERE campaign_id = $1', [campaignId]);
-  if (Number(linked.rows[0].count) > 0) {
-    return res.status(409).json({ error: 'Dieser Zeitraum hat bereits Abgaben und kann nicht gelöscht werden.' });
-  }
-  const result = await pool.query('DELETE FROM contribution_campaigns WHERE id = $1', [campaignId]);
-  if (!result.rowCount) return res.status(404).json({ error: 'Abgabezeitraum nicht gefunden.' });
-  res.json({ ok: true });
-}));
-
-app.patch('/api/admin/submissions/:id', requireAdmin, asyncRoute(async (req, res) => {
-  const status = String(req.body.status || '');
-  if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Ungültiger Status.' });
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const campaign = await client.query(
+      'SELECT * FROM contribution_campaigns WHERE id = $1 FOR UPDATE',
+      [campaignId],
+    );
+    if (!campaign.rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Abgabezeitraum nicht gefunden.' });
+    }
+    const submissions = await client.query(`
+      SELECT s.*, COALESCE(s.resource_type, $2) AS effective_resource_type
+      FROM submissions s
+      WHERE s.campaign_id = $1
+      FOR UPDATE
+    `, [campaignId, campaign.rows[0].resource_type]);
+    let reversedApproved = 0;
+    let reversedAmount = 0;
+    for (const submission of submissions.rows) {
+      if (submission.status !== 'approved') continue;
+      await adjustSubmissionBooking(client, {
+        ...submission,
+        resource_type: submission.effective_resource_type,
+      }, -1);
+      reversedApproved += 1;
+      reversedAmount += Number(submission.amount);
+    }
+    await client.query('DELETE FROM submissions WHERE campaign_id = $1', [campaignId]);
+    await client.query('DELETE FROM contribution_campaigns WHERE id = $1', [campaignId]);
+    await client.query('COMMIT');
+    res.json({ ok: true, deletedSubmissions: submissions.rowCount, reversedApproved, reversedAmount });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
+function bookingConflict(message) {
+  const error = new Error(message);
+  error.status = 409;
+  return error;
+}
+
+async function adjustSubmissionBooking(client, submission, direction) {
+  const amount = Number(submission.amount) * direction;
+  if (!Number.isSafeInteger(amount) || !['cash', 'dirty_cash', 'item'].includes(submission.resource_type)) {
+    throw bookingConflict('Die Buchung dieser Abgabe ist unvollständig und kann nicht geändert werden.');
+  }
+  if (submission.resource_type === 'item') {
+    if (!submission.inventory_item_id) {
+      throw bookingConflict('Der zugeordnete Inventarartikel existiert nicht mehr.');
+    }
+    const inventory = await client.query(`
+      UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW()
+      WHERE id = $2 AND quantity + $1 >= 0
+      RETURNING id, name, quantity
+    `, [amount, submission.inventory_item_id]);
+    if (!inventory.rows[0]) {
+      throw bookingConflict(direction < 0
+        ? 'Die Bestätigung kann nicht rückgängig gemacht werden, weil der Artikelbestand dafür nicht ausreicht.'
+        : 'Der zugeordnete Inventarartikel existiert nicht mehr.');
+    }
+    return { type: 'item', name: inventory.rows[0].name, total: inventory.rows[0].quantity };
+  }
+  const column = submission.resource_type === 'dirty_cash' ? 'dirty_cash' : 'cash';
+  const finance = await client.query(`
+    UPDATE finance SET ${column} = ${column} + $1, updated_at = NOW()
+    WHERE id = 1 AND ${column} + $1 >= 0
+    RETURNING ${column} AS total
+  `, [amount]);
+  if (!finance.rows[0]) {
+    throw bookingConflict(direction < 0
+      ? `Die Bestätigung kann nicht rückgängig gemacht werden, weil nicht genug ${submission.resource_type === 'dirty_cash' ? 'Schwarzgeld' : 'Geld'} vorhanden ist.`
+      : 'Der Kontostand konnte nicht aktualisiert werden.');
+  }
+  return {
+    type: submission.resource_type,
+    name: submission.resource_type === 'dirty_cash' ? 'Schwarzgeld' : 'Geld',
+    total: finance.rows[0].total,
+  };
+}
+
+app.patch('/api/admin/submissions/:id', requireAdmin, asyncRoute(async (req, res) => {
+  const status = String(req.body.status || '');
+  if (!['pending', 'approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Ungültiger Status.' });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query(`
+      SELECT * FROM submissions WHERE id = $1 FOR UPDATE
+    `, [intValue(req.params.id)]);
+    const submission = current.rows[0];
+    if (!submission) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Abgabe nicht gefunden.' });
+    }
+    if (!submission.resource_type && submission.campaign_id) {
+      const campaign = await client.query(
+        'SELECT resource_type FROM contribution_campaigns WHERE id = $1',
+        [submission.campaign_id],
+      );
+      submission.resource_type = campaign.rows[0]?.resource_type;
+    }
+    if (status === 'pending') {
+      if (submission.status === 'pending') {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Diese Abgabe ist bereits offen.' });
+      }
+      const booking = submission.status === 'approved'
+        ? await adjustSubmissionBooking(client, submission, -1)
+        : null;
+      const { rows } = await client.query(`
+        UPDATE submissions SET status = 'pending', reviewed_by = NULL, reviewed_at = NULL
+        WHERE id = $1 RETURNING *
+      `, [submission.id]);
+      await client.query('COMMIT');
+      return res.json({ submission: rows[0], booking, undone: true });
+    }
+    if (submission.status !== 'pending') {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Bitte mache die bisherige Entscheidung zuerst rückgängig.' });
+    }
+    const booking = status === 'approved'
+      ? await adjustSubmissionBooking(client, submission, 1)
+      : null;
     const { rows } = await client.query(`
       UPDATE submissions SET status = $1, reviewed_by = $2, reviewed_at = NOW()
-      WHERE id = $3 AND status = 'pending' RETURNING *
-    `, [status, req.user.id, intValue(req.params.id)]);
-    if (!rows[0]) {
-      await client.query('ROLLBACK');
-      return res.status(404).json({ error: 'Offene Abgabe nicht gefunden.' });
-    }
-    if (status === 'approved') {
-      const campaign = await client.query('SELECT * FROM contribution_campaigns WHERE id = $1', [rows[0].campaign_id]);
-      if (!campaign.rows[0]) {
-        await client.query('ROLLBACK');
-        return res.status(409).json({ error: 'Der zugehörige Abgabezeitraum existiert nicht mehr.' });
-      }
-      let booking;
-      if (campaign.rows[0].resource_type === 'item') {
-        const inventory = await client.query(`
-          UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW()
-          WHERE id = $2 RETURNING id, name, quantity
-        `, [rows[0].amount, campaign.rows[0].inventory_item_id]);
-        if (!inventory.rows[0]) {
-          await client.query('ROLLBACK');
-          return res.status(409).json({ error: 'Der zugeordnete Inventarartikel existiert nicht mehr.' });
-        }
-        booking = { type: 'item', name: inventory.rows[0].name, total: inventory.rows[0].quantity };
-      } else {
-        const column = campaign.rows[0].resource_type === 'dirty_cash' ? 'dirty_cash' : 'cash';
-        const finance = await client.query(`
-          UPDATE finance SET ${column} = ${column} + $1, updated_at = NOW()
-          WHERE id = 1 RETURNING ${column} AS total
-        `, [rows[0].amount]);
-        booking = {
-          type: campaign.rows[0].resource_type,
-          name: campaign.rows[0].resource_type === 'dirty_cash' ? 'Schwarzgeld' : 'Geld',
-          total: finance.rows[0].total,
-        };
-      }
-      await client.query('COMMIT');
-      return res.json({ submission: rows[0], booking });
-    }
+      WHERE id = $3 RETURNING *
+    `, [status, req.user.id, submission.id]);
     await client.query('COMMIT');
-    res.json({ submission: rows[0] });
+    res.json({ submission: rows[0], booking });
   } catch (error) {
     await client.query('ROLLBACK');
     throw error;
@@ -741,6 +822,7 @@ app.use(express.static(publicDir, { maxAge: isProduction ? '1h' : 0 }));
 app.get('*splat', (_req, res) => res.sendFile(path.join(publicDir, 'index.html')));
 
 app.use((error, _req, res, _next) => {
+  if (error.status && Number.isInteger(error.status)) return res.status(error.status).json({ error: error.message });
   console.error(error);
   if (error.code === '23505') return res.status(409).json({ error: 'Dieser Name ist bereits vergeben.' });
   if (error instanceof multer.MulterError) return res.status(400).json({ error: 'Das Bild ist zu groß. Maximal 4 MB.' });

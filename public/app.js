@@ -556,7 +556,7 @@ function adminSubmissions() {
     }).join('') : emptyState('+', 'Noch kein Abgabezeitraum', 'Lege zum Beispiel eine Woche mit 500.000 $ Ziel an.')}
   </div></div>
   <div class="panel admin-submissions-panel"><div class="panel__head"><h3>Abgaben prüfen</h3><span class="muted">${rows.filter((item) => item.status === 'pending').length} offen</span></div><div class="panel__body admin-list">
-    ${rows.length ? rows.map((item) => `<div class="admin-row"><div class="admin-row__name"><div><strong>${escapeHtml(item.display_name)}</strong><span>${escapeHtml(item.campaign_name || 'Alter Eintrag')} · ${formatDate(item.submitted_at, { dateStyle: 'medium', timeStyle: 'short' })} · ${escapeHtml(item.note || 'Ohne Notiz')}</span></div></div><strong>${formatContribution(item.amount, item.resource_type, item.item_name)}</strong><span class="status-badge status-badge--${escapeHtml(item.status)}">${statusText(item.status)}</span><div class="admin-row__actions">${item.status === 'pending' ? `<button class="button button--small" data-review="approved" data-id="${item.id}">Bestätigen</button><button class="button button--small button--danger" data-review="rejected" data-id="${item.id}">Ablehnen</button>` : ''}</div></div>`).join('') : emptyState('↗', 'Keine Abgaben', 'Eingetragene Abgaben erscheinen hier.')}
+    ${rows.length ? rows.map((item) => `<div class="admin-row"><div class="admin-row__name"><div><strong>${escapeHtml(item.display_name)}</strong><span>${escapeHtml(item.campaign_name || 'Alter Eintrag')} · ${formatDate(item.submitted_at, { dateStyle: 'medium', timeStyle: 'short' })} · ${escapeHtml(item.note || 'Ohne Notiz')}</span></div></div><strong>${formatContribution(item.amount, item.resource_type, item.item_name)}</strong><span class="status-badge status-badge--${escapeHtml(item.status)}">${statusText(item.status)}</span><div class="admin-row__actions">${item.status === 'pending' ? `<button class="button button--small" data-review="approved" data-id="${item.id}">Bestätigen</button><button class="button button--small button--danger" data-review="rejected" data-id="${item.id}">Ablehnen</button>` : `<button class="button button--small" data-review="pending" data-id="${item.id}">Rückgängig</button>`}</div></div>`).join('') : emptyState('↗', 'Keine Abgaben', 'Eingetragene Abgaben erscheinen hier.')}
   </div></div>`;
 }
 
@@ -738,7 +738,10 @@ async function saveEditor(event) {
 }
 
 async function removeItem(type, id) {
-  if (!window.confirm('Diesen Eintrag wirklich löschen?')) return;
+  const question = type === 'campaign'
+    ? 'Diesen Abgabezeitraum samt aller zugehörigen Abgaben wirklich löschen? Bereits bestätigte Beträge werden aus Geld, Schwarzgeld oder Inventar zurückgebucht.'
+    : 'Diesen Eintrag wirklich löschen?';
+  if (!window.confirm(question)) return;
   const endpointType = adminEndpoint(type);
   try {
     await api(`/api/admin/${endpointType}/${id}`, { method: 'DELETE' });
@@ -750,11 +753,14 @@ async function removeItem(type, id) {
 }
 
 async function reviewSubmission(id, status) {
+  if (status === 'pending' && !window.confirm('Diese Entscheidung wirklich rückgängig machen? Bei einer bestätigten Abgabe wird der gebuchte Bestand wieder abgezogen.')) return;
   try {
     const result = await api(`/api/admin/submissions/${id}`, { method: 'PATCH', body: { status } });
     toast(status === 'approved'
       ? `${formatContribution(result.submission.amount, result.booking?.type, result.booking?.name)} als ${result.booking?.name || 'Abgabe'} gebucht.`
-      : 'Abgabe abgelehnt.');
+      : status === 'pending'
+        ? `Entscheidung rückgängig gemacht.${result.booking ? ' Der Bestand wurde korrigiert.' : ''}`
+        : 'Abgabe abgelehnt.');
     await loadAdmin();
   } catch (error) {
     toast(error.message, true);

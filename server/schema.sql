@@ -69,6 +69,7 @@ CREATE TABLE IF NOT EXISTS inventory_items (
 
 ALTER TABLE users ADD COLUMN IF NOT EXISTS submission_item_id INTEGER;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER;
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS resource_type VARCHAR(16);
 CREATE INDEX IF NOT EXISTS idx_submissions_inventory_item ON submissions (inventory_item_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_week ON submissions (submitted_at, user_id, status);
 
