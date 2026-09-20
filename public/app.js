@@ -191,14 +191,15 @@ els.loginForm.addEventListener('submit', async (event) => {
 
 els.registerForm.addEventListener('submit', async (event) => {
   event.preventDefault();
-  const button = event.currentTarget.querySelector('button[type="submit"]');
+  const formElement = event.currentTarget;
+  const button = formElement.querySelector('button[type="submit"]');
   button.disabled = true;
   els.authMessage.textContent = '';
   els.authMessage.className = 'form-message';
   try {
-    const form = new FormData(event.currentTarget);
+    const form = new FormData(formElement);
     const data = await api('/api/auth/register', { method: 'POST', body: Object.fromEntries(form) });
-    event.currentTarget.reset();
+    formElement.reset();
     toast(data.user.is_admin ? 'Admin-Account erstellt.' : 'Account erstellt. Dir fehlt noch eine Rolle.');
     showApp(data.user);
   } catch (error) {
