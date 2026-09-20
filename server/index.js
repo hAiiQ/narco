@@ -307,8 +307,9 @@ app.get('/api/progress', requireRole, asyncRoute(async (_req, res) => {
       SELECT c.*, item.name AS item_name
       FROM contribution_campaigns c
       LEFT JOIN inventory_items item ON item.id = c.inventory_item_id
-      WHERE c.starts_at <= NOW() AND c.ends_at >= NOW()
-      ORDER BY c.ends_at ASC, c.created_at DESC
+      WHERE c.starts_at <= NOW()
+      ORDER BY CASE WHEN c.ends_at >= NOW() THEN 0 ELSE 1 END,
+               c.starts_at DESC, c.created_at DESC
     `),
     pool.query(`
       SELECT u.id, u.display_name, u.avatar_asset_id,
