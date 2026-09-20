@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#090b0f" />
+    <meta name="description" content="Internes Mitarbeiter- und Verwaltungsportal der Tequi-La-La Bar." />
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/styles.css" />
+    <title>Tequi-La-La · Crew Portal</title>
+  </head>
+  <body>
+    <div class="ambient" aria-hidden="true"></div>
+
+    <section id="auth-screen" class="auth-shell">
+      <div class="auth-brand">
+        <div class="auth-brand__shade"></div>
+        <img class="auth-logo" src="/logo.png" alt="Tequi-La-La Bar" />
+        <div class="auth-brand__copy">
+          <span class="eyebrow">Crew Management</span>
+          <h1>Deine Bar.<br />Dein Team.</h1>
+          <p>Schichten, Abgaben, Bestand und Events an einem Ort.</p>
+        </div>
+      </div>
+
+      <div class="auth-panel">
+        <div class="auth-card">
+          <div class="brand-mark" aria-hidden="true">T</div>
+          <p class="eyebrow">Tequi-La-La Portal</p>
+          <h2 id="auth-title">Willkommen zurück</h2>
+          <p id="auth-copy" class="muted">Melde dich mit deinem freigeschalteten Account an.</p>
+
+          <form id="login-form" class="stack-form">
+            <label>Benutzername oder E-Mail
+              <input name="login" autocomplete="username" required placeholder="dein.name" />
+            </label>
+            <label>Passwort
+              <input name="password" type="password" autocomplete="current-password" required placeholder="Mindestens 8 Zeichen" />
+            </label>
+            <button class="button button--primary button--wide" type="submit">Anmelden <span>↗</span></button>
+          </form>
+
+          <form id="register-form" class="stack-form" hidden>
+            <div class="form-grid form-grid--two">
+              <label>Name
+                <input name="displayName" autocomplete="name" required placeholder="Vor- und Nachname" />
+              </label>
+              <label>Benutzername
+                <input name="username" autocomplete="username" required placeholder="dein.name" />
+              </label>
+            </div>
+            <label>E-Mail
+              <input name="email" type="email" autocomplete="email" required placeholder="name@beispiel.de" />
+            </label>
+            <label>Passwort
+              <input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Mindestens 8 Zeichen" />
+            </label>
+            <button class="button button--primary button--wide" type="submit">Account erstellen <span>↗</span></button>
+            <p class="form-note">Der erste Account wird Admin. Alle weiteren Accounts müssen freigeschaltet werden.</p>
+          </form>
+
+          <p id="auth-message" class="form-message" role="status" aria-live="polite"></p>
+          <button id="auth-switch" class="text-button" type="button">Noch kein Account? Registrieren</button>
+        </div>
+      </div>
+    </section>
+
+    <div id="app-shell" class="app-shell" hidden>
+      <aside class="sidebar">
+        <div class="sidebar__brand">
+          <img src="/logo.png" alt="" />
+          <div><strong>TEQUI-LA-LA</strong><span>CREW PORTAL</span></div>
+        </div>
+        <nav id="main-nav" class="main-nav" aria-label="Hauptnavigation">
+          <button data-route="dashboard" class="is-active"><span class="nav-icon">⌂</span><span>Übersicht</span></button>
+          <button data-route="staff"><span class="nav-icon">◎</span><span>Mitarbeiter</span></button>
+          <button data-route="progress"><span class="nav-icon">↗</span><span>Abgaben</span></button>
+          <button data-route="inventory"><span class="nav-icon">▦</span><span>Inventar</span></button>
+          <button data-route="menu"><span class="nav-icon">◇</span><span>Speisekarte</span></button>
+          <button data-route="events"><span class="nav-icon">✦</span><span>Events</span></button>
+          <button data-route="admin" data-admin-only hidden><span class="nav-icon">⚙</span><span>Adminbereich</span></button>
+        </nav>
+        <div class="sidebar__footer">
+          <div class="status-line"><i></i><span>System online</span></div>
+          <button id="logout-button" class="logout-button" type="button">Abmelden <span>↗</span></button>
+        </div>
+      </aside>
+
+      <header class="topbar">
+        <button id="mobile-menu-button" class="mobile-menu-button" aria-label="Menü öffnen" type="button">☰</button>
+        <div>
+          <p id="page-kicker" class="eyebrow">Zentrale</p>
+          <h1 id="page-title">Übersicht</h1>
+        </div>
+        <div class="topbar__right">
+          <div class="clock"><span id="live-date"></span><strong id="live-time"></strong></div>
+          <div class="user-chip">
+            <div id="user-avatar" class="user-avatar">T</div>
+            <div><strong id="user-name"></strong><span id="user-role"></span></div>
+          </div>
+        </div>
+      </header>
+
+      <main id="page-content" class="page-content" tabindex="-1"></main>
+    </div>
+
+    <div id="modal-root"></div>
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>
