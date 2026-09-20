@@ -240,7 +240,7 @@ input:hover, textarea:hover, select:hover { border-color: rgba(255,255,255,.28);
 .admin-row__name div:last-child { min-width: 0; }
 .admin-row__name strong, .admin-row__name span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .admin-row__name span { color: var(--muted); font-size: .74rem; }
-.admin-row__actions { display: flex; justify-content: flex-end; gap: 7px; }
+.admin-row__actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .admin-stats { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 12px; margin-bottom: 20px; }
 .admin-submissions-panel { margin-top: 18px; }
 .admin-stat { padding: 17px; border: 1px solid var(--line); background: rgba(255,255,255,.018); }

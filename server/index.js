@@ -721,6 +721,40 @@ app.patch('/api/admin/submissions/:id', requireAdmin, asyncRoute(async (req, res
   }
 }));
 
+app.delete('/api/admin/submissions/:id', requireAdmin, asyncRoute(async (req, res) => {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const current = await client.query(
+      'SELECT * FROM submissions WHERE id = $1 FOR UPDATE',
+      [intValue(req.params.id)],
+    );
+    const submission = current.rows[0];
+    if (!submission) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Abgabe nicht gefunden.' });
+    }
+    if (!submission.resource_type && submission.campaign_id) {
+      const campaign = await client.query(
+        'SELECT resource_type FROM contribution_campaigns WHERE id = $1',
+        [submission.campaign_id],
+      );
+      submission.resource_type = campaign.rows[0]?.resource_type;
+    }
+    const booking = submission.status === 'approved'
+      ? await adjustSubmissionBooking(client, submission, -1)
+      : null;
+    await client.query('DELETE FROM submissions WHERE id = $1', [submission.id]);
+    await client.query('COMMIT');
+    res.json({ ok: true, submission, booking });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
+}));
+
 app.post('/api/admin/roles', requireAdmin, asyncRoute(async (req, res) => {
   const name = trimmed(req.body.name, 80);
   if (name.length < 2) return res.status(400).json({ error: 'Bitte gib einen Rollennamen ein.' });
