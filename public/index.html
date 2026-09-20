@@ -28,7 +28,7 @@
           <div class="brand-mark" aria-hidden="true">T</div>
           <p class="eyebrow">Tequi-La-La Portal</p>
           <h2 id="auth-title">Willkommen zurück</h2>
-          <p id="auth-copy" class="muted">Melde dich mit deinem freigeschalteten Account an.</p>
+          <p id="auth-copy" class="muted">Melde dich mit deinem Narco-City-Account an.</p>
 
           <form id="login-form" class="stack-form">
             <label>Narco City Ingame-Name
@@ -65,13 +65,27 @@
               <input name="password" type="password" autocomplete="new-password" minlength="8" required placeholder="Mindestens 8 Zeichen" />
             </label>
             <button class="button button--primary button--wide" type="submit">Account erstellen <span>↗</span></button>
-            <p class="form-note">Der erste Account wird Admin. Alle weiteren Accounts müssen freigeschaltet werden.</p>
+            <p class="form-note">Nach der Registrierung kannst du dich sofort anmelden. Der Portalzugang wird aktiv, sobald dir eine Rolle zugewiesen wurde.</p>
           </form>
 
           <p id="auth-message" class="form-message" role="status" aria-live="polite"></p>
           <button id="auth-switch" class="text-button" type="button">Noch kein Account? Registrieren</button>
         </div>
       </div>
+    </section>
+
+    <section id="role-wait-screen" class="role-wait-shell" hidden>
+      <article class="panel role-wait-card">
+        <img src="/logo.png" alt="Tequi-La-La Bar" />
+        <p class="eyebrow">Account erstellt</p>
+        <h1>Willkommen, <span id="role-wait-name"></span>.</h1>
+        <p>Dein Account ist aktiv. Du kannst das Crew-Portal verwenden, sobald dir ein Admin eine Rolle zugewiesen hat.</p>
+        <div class="role-wait-status"><i></i><span>Wartet auf Rollenzuweisung</span></div>
+        <div class="role-wait-actions">
+          <button id="role-wait-refresh" class="button button--primary" type="button">Status prüfen</button>
+          <button id="role-wait-logout" class="button button--ghost" type="button">Abmelden</button>
+        </div>
+      </article>
     </section>
 
     <div id="app-shell" class="app-shell" hidden>

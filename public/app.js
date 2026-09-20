@@ -8,6 +8,8 @@ const state = {
 
 const els = {
   authScreen: document.querySelector('#auth-screen'),
+  roleWaitScreen: document.querySelector('#role-wait-screen'),
+  roleWaitName: document.querySelector('#role-wait-name'),
   appShell: document.querySelector('#app-shell'),
   loginForm: document.querySelector('#login-form'),
   registerForm: document.querySelector('#register-form'),
@@ -106,6 +108,9 @@ async function api(url, options = {}) {
   const payload = response.headers.get('content-type')?.includes('application/json') ? await response.json() : null;
   if (!response.ok) {
     if (response.status === 401 && state.user) showAuth();
+    if (response.status === 403 && payload?.code === 'ROLE_REQUIRED' && state.user) {
+      showApp({ ...state.user, role_id: null, role_name: null });
+    }
     const error = new Error(payload?.error || 'Anfrage fehlgeschlagen.');
     error.status = response.status;
     error.payload = payload;
@@ -127,6 +132,7 @@ function showAuth(message = '') {
   state.adminData = null;
   state.webMcpController?.abort();
   els.appShell.hidden = true;
+  els.roleWaitScreen.hidden = true;
   els.authScreen.hidden = false;
   els.authMessage.textContent = message;
 }
@@ -134,6 +140,14 @@ function showAuth(message = '') {
 function showApp(user) {
   state.user = user;
   els.authScreen.hidden = true;
+  if (!user.role_id && !user.is_admin) {
+    state.webMcpController?.abort();
+    els.appShell.hidden = true;
+    els.roleWaitScreen.hidden = false;
+    els.roleWaitName.textContent = user.display_name;
+    return;
+  }
+  els.roleWaitScreen.hidden = true;
   els.appShell.hidden = false;
   els.userName.textContent = user.display_name;
   els.userRole.textContent = user.role_name || (user.is_admin ? 'Administrator' : 'Crew');
@@ -150,8 +164,8 @@ function toggleAuthMode() {
   els.loginForm.hidden = registering;
   els.authTitle.textContent = registering ? 'Crew beitreten' : 'Willkommen zurück';
   els.authCopy.textContent = registering
-    ? 'Registriere dich mit deinen Narco-City-IC-Daten. Ein Admin schaltet dich anschließend frei.'
-    : 'Melde dich mit deinem freigeschalteten Account an.';
+    ? 'Registriere dich mit deinen Narco-City-IC-Daten. Eine Rolle schaltet den Portalzugang frei.'
+    : 'Melde dich mit deinem Narco-City-Account an.';
   els.authSwitch.textContent = registering ? 'Schon registriert? Anmelden' : 'Noch kein Account? Registrieren';
   els.authMessage.textContent = '';
   els.authMessage.className = 'form-message';
@@ -185,14 +199,8 @@ els.registerForm.addEventListener('submit', async (event) => {
     const form = new FormData(event.currentTarget);
     const data = await api('/api/auth/register', { method: 'POST', body: Object.fromEntries(form) });
     event.currentTarget.reset();
-    if (data.firstAdmin) {
-      const session = await api('/api/auth/session');
-      toast('Dein Admin-Account wurde erstellt.');
-      showApp(session.user);
-      return;
-    }
-    els.authMessage.textContent = data.message;
-    els.authMessage.className = 'form-message is-success';
+    toast(data.user.is_admin ? 'Admin-Account erstellt.' : 'Account erstellt. Dir fehlt noch eine Rolle.');
+    showApp(data.user);
   } catch (error) {
     els.authMessage.textContent = error.message;
   } finally {
@@ -200,10 +208,26 @@ els.registerForm.addEventListener('submit', async (event) => {
   }
 });
 
-document.querySelector('#logout-button').addEventListener('click', async () => {
+async function logout() {
   await api('/api/auth/logout', { method: 'POST' }).catch(() => null);
   history.replaceState(null, '', location.pathname);
   showAuth('Du wurdest abgemeldet.');
+}
+
+document.querySelector('#logout-button').addEventListener('click', logout);
+document.querySelector('#role-wait-logout').addEventListener('click', logout);
+document.querySelector('#role-wait-refresh').addEventListener('click', async () => {
+  const button = document.querySelector('#role-wait-refresh');
+  button.disabled = true;
+  try {
+    const { user } = await api('/api/auth/session');
+    showApp(user);
+    toast(user.role_id || user.is_admin ? 'Dein Portalzugang ist jetzt aktiv.' : 'Dir wurde noch keine Rolle zugewiesen.');
+  } catch (error) {
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+  }
 });
 
 document.querySelector('#mobile-menu-button').addEventListener('click', () => {
@@ -276,7 +300,7 @@ function renderDashboard(data) {
             <p>Hier findest du den aktuellen Stand deiner Crew, eure Abgaben und alles, was in der Bar ansteht.</p>
           </article>
           <div class="stat-grid" style="margin-top:12px">
-            <article class="stat-card" data-symbol="◎"><span>Aktive Crew</span><strong>${formatNumber(data.staff)}</strong><em>freigeschaltete Accounts</em></article>
+            <article class="stat-card" data-symbol="◎"><span>Aktive Crew</span><strong>${formatNumber(data.staff)}</strong><em>Accounts mit Rolle</em></article>
             <article class="stat-card" data-symbol="↗"><span>Offene Abgaben</span><strong>${formatNumber(data.pendingSubmissions)}</strong><em>warten auf Prüfung</em></article>
             <article class="stat-card" data-symbol="▦"><span>Inventar</span><strong>${formatNumber(data.inventoryCount)}</strong><em>Einheiten erfasst</em></article>
             <article class="stat-card" data-symbol="✦"><span>Events</span><strong>${formatNumber(data.upcomingEvents)}</strong><em>aktuell geplant</em></article>
@@ -305,7 +329,7 @@ function renderDashboard(data) {
 function renderStaff(data) {
   els.content.innerHTML = `
     <section class="page-section">
-      ${sectionHead('Unsere Crew', `${data.staff.length} freigeschaltete Mitarbeiter im Team`)}
+      ${sectionHead('Unsere Crew', `${data.staff.length} Mitarbeiter mit aktiver Rolle`)}
       <div class="card-grid">
         ${data.staff.length ? data.staff.map((person) => {
           const roleColor = color(person.role_color);
@@ -347,7 +371,7 @@ function renderProgress(progress, submissions) {
             <div><div class="progress-track"><i style="--progress:${percent}%"></i></div><div class="progress-stats"><span>${percent}% erreicht</span><span>${Number(entry.pending_amount) > 0 ? `${formatNumber(entry.pending_amount)} ausstehend` : 'Keine offenen Einträge'}</span></div></div>
             <div class="progress-value"><strong>${formatNumber(approved)} / ${formatNumber(target)}</strong><span>bestätigte Abgabe</span></div>
           </article>`;
-        }).join('') : emptyState('↗', 'Noch kein Fortschritt', 'Sobald Accounts freigeschaltet sind, erscheinen sie hier.')}
+        }).join('') : emptyState('↗', 'Noch kein Fortschritt', 'Sobald Accounts eine Rolle haben, erscheinen sie hier.')}
       </div>
       <div class="panel" style="margin-top:24px">
         <div class="panel__head"><h3>${state.user.is_admin ? 'Alle Abgaben' : 'Meine Einträge'}</h3><span class="muted">${submissions.length} Einträge</span></div>
@@ -439,12 +463,12 @@ async function loadAdmin() {
 function renderAdmin() {
   if (!state.adminData) return;
   const d = state.adminData;
-  const pendingUsers = d.users.filter((user) => !user.is_approved).length;
+  const usersWithoutRole = d.users.filter((user) => !user.role_id && !user.is_admin).length;
   const pendingSubmissions = d.submissions.filter((item) => item.status === 'pending').length;
   els.content.innerHTML = `
     <section class="page-section">
       ${sectionHead('Verwaltung', 'Accounts, Inhalte und Bar-Daten zentral bearbeiten')}
-      <div class="admin-tabs">${adminTabs.map(([id, label]) => `<button data-admin-tab="${id}" class="${state.adminTab === id ? 'is-active' : ''}">${label}${id === 'users' && pendingUsers ? ` · ${pendingUsers}` : ''}${id === 'submissions' && pendingSubmissions ? ` · ${pendingSubmissions}` : ''}</button>`).join('')}</div>
+      <div class="admin-tabs">${adminTabs.map(([id, label]) => `<button data-admin-tab="${id}" class="${state.adminTab === id ? 'is-active' : ''}">${label}${id === 'users' && usersWithoutRole ? ` · ${usersWithoutRole}` : ''}${id === 'submissions' && pendingSubmissions ? ` · ${pendingSubmissions}` : ''}</button>`).join('')}</div>
       <div id="admin-view">${renderAdminTab()}</div>
     </section>`;
 }
@@ -454,7 +478,7 @@ function renderAdminTab() {
   if (state.adminTab === 'overview') return `
     <div class="admin-stats">
       <div class="admin-stat"><span>Accounts</span><strong>${d.users.length}</strong></div>
-      <div class="admin-stat"><span>Warten auf Freigabe</span><strong>${d.users.filter((user) => !user.is_approved).length}</strong></div>
+      <div class="admin-stat"><span>Ohne Rolle</span><strong>${d.users.filter((user) => !user.role_id && !user.is_admin).length}</strong></div>
       <div class="admin-stat"><span>Offene Abgaben</span><strong>${d.submissions.filter((item) => item.status === 'pending').length}</strong></div>
       <div class="admin-stat"><span>Rollen</span><strong>${d.roles.length}</strong></div>
     </div>
@@ -479,7 +503,7 @@ function adminUsers() {
     ${d.users.map((user) => `<div class="admin-row">
       <div class="admin-row__name"><div class="mini-avatar" style="--role:${color(user.role_color)};${avatarStyle(user.avatar_asset_id)}">${user.avatar_asset_id ? '' : escapeHtml(initials(user.display_name))}</div><div><strong>${escapeHtml(user.display_name)}</strong><span>${escapeHtml(genderText(user.gender))} · IC-Geburtstag: ${escapeHtml(formatDate(user.birth_date))}</span></div></div>
       <span class="role-badge" style="--role:${color(user.role_color)}">${escapeHtml(user.role_name || 'Keine Rolle')}</span>
-      <span class="status-badge status-badge--${user.is_approved ? 'approved' : 'pending'}">${user.is_approved ? 'Freigegeben' : 'Wartet'}</span>
+      <span class="status-badge status-badge--${user.role_id || user.is_admin ? 'approved' : 'pending'}">${user.role_id || user.is_admin ? 'Aktiv' : 'Ohne Rolle'}</span>
       <div class="admin-row__actions"><button class="button button--small" data-edit="user" data-id="${user.id}">Bearbeiten</button>${Number(user.id) !== Number(state.user.id) ? `<button class="button button--small button--danger" data-delete="user" data-id="${user.id}">Löschen</button>` : ''}</div>
     </div>`).join('')}
   </div></div>`;
@@ -578,7 +602,7 @@ function userEditor(user) {
     </div>
     <label>Aufgabenbereich<input name="taskArea" value="${escapeHtml(user.task_area || '')}" placeholder="z. B. Barleitung und Einkauf" /></label>
     <label>Weitere Informationen<textarea name="about">${escapeHtml(user.about || '')}</textarea></label>
-    <div class="form-grid form-grid--two"><label class="checkbox"><input name="isApproved" type="checkbox" ${user.is_approved ? 'checked' : ''} /> Account freigeschaltet</label><label class="checkbox"><input name="isAdmin" type="checkbox" ${user.is_admin ? 'checked' : ''} /> Adminrechte</label></div>
+    <label class="checkbox"><input name="isAdmin" type="checkbox" ${user.is_admin ? 'checked' : ''} /> Adminrechte</label>
     <input name="avatarAssetId" type="hidden" value="${user.avatar_asset_id || ''}" />
     <div class="modal__actions"><button class="button button--ghost" type="button" data-close-modal>Abbrechen</button><button class="button button--primary" type="submit">Speichern</button></div>
   </form>`);
@@ -626,7 +650,6 @@ async function saveEditor(event) {
       if (form.dataset.type === 'user') values.avatarAssetId = assetId;
       else values.imageAssetId = assetId;
     }
-    values.isApproved = Boolean(form.elements.isApproved?.checked);
     values.isAdmin = Boolean(form.elements.isAdmin?.checked);
     values.available = form.elements.available ? Boolean(form.elements.available.checked) : undefined;
     delete values.image;

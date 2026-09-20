@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS users (
   role_id INTEGER REFERENCES roles(id) ON DELETE SET NULL,
   avatar_asset_id INTEGER REFERENCES assets(id) ON DELETE SET NULL,
   submission_target INTEGER NOT NULL DEFAULT 0 CHECK (submission_target >= 0),
-  is_approved BOOLEAN NOT NULL DEFAULT FALSE,
+  is_approved BOOLEAN NOT NULL DEFAULT TRUE,
   is_admin BOOLEAN NOT NULL DEFAULT FALSE,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -109,3 +109,9 @@ INSERT INTO roles (name, color, priority) VALUES
   ('Praktikant', '#6d0acb', 20),
   ('Aushilfe', '#8418e8', 10)
 ON CONFLICT (name) DO NOTHING;
+
+UPDATE users SET is_approved = TRUE WHERE is_approved = FALSE;
+UPDATE users
+SET is_admin = TRUE,
+    role_id = COALESCE(role_id, (SELECT id FROM roles WHERE name = 'Inhaber' LIMIT 1))
+WHERE LOWER(display_name) = 'michael black';

@@ -8,8 +8,9 @@ Ein vollständiges, responsives Mitarbeiter- und Verwaltungsportal für die Tequ
 
 - Registrierung mit IC-Vorname, IC-Nachname, IC-Geburtsdatum, Geschlecht und sicherem Passwort
 - Login über den vollständigen Narco-City-Ingame-Namen
-- Der erste registrierte Account wird automatisch freigeschalteter Admin
-- Alle weiteren Accounts müssen von einem Admin bestätigt werden
+- Registrierte Accounts können sich sofort anmelden und benötigen keine Freischaltung
+- Ohne zugewiesene Rolle bleibt das Portal gesperrt; Rollen werden im Adminbereich vergeben
+- Der IC-Account `Michael Black` erhält automatisch Adminrechte und die Inhaber-Rolle
 - Mitarbeiterprofile mit Name, Rolle, Alter, Geburtsdatum, Aufgabenbereich, Info und Profilbild
 - Abgaben mit persönlichem Fortschritt, Zielwert und Admin-Bestätigung
 - Inventar mit Bildern, Mengen, Geld und Schwarzgeld
@@ -24,7 +25,7 @@ Ein vollständiges, responsives Mitarbeiter- und Verwaltungsportal für die Tequ
 1. Dieses Repository zu GitHub pushen.
 2. Oben auf **Deploy to Render** klicken oder in Render **New → Blueprint** wählen.
 3. Das Repository `hAiiQ/narco` verbinden und den Blueprint anwenden.
-4. Nach dem ersten Start die Website öffnen und sofort den ersten Account registrieren. Dieser Account ist automatisch der Admin.
+4. Nach dem ersten Start den IC-Account `Michael Black` registrieren. Dieser Account erhält automatisch Adminrechte und kann anschließend die Rollen der übrigen Crew vergeben.
 
 Die Datei `render.yaml` erstellt den Webservice und die PostgreSQL-Datenbank inklusive aller benötigten Umgebungsvariablen. Bilder werden direkt in PostgreSQL gespeichert und gehen deshalb bei einem Neustart des Webservices nicht verloren.
 
