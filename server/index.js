@@ -123,14 +123,25 @@ function ageFromBirthDate(date) {
   return Math.max(0, age);
 }
 
+function startOfCurrentWeek() {
+  const now = new Date();
+  const daysSinceMonday = (now.getUTCDay() + 6) % 7;
+  now.setUTCHours(0, 0, 0, 0);
+  now.setUTCDate(now.getUTCDate() - daysSinceMonday);
+  return now;
+}
+
 async function currentUser(userId) {
   if (!userId) return null;
   const { rows } = await pool.query(`
     SELECT u.id, u.username, u.display_name, u.first_name, u.last_name, u.gender,
            u.age, u.birth_date, u.task_area,
-           u.about, u.role_id, u.avatar_asset_id, u.submission_target, u.is_admin,
-           u.is_approved, r.name AS role_name, r.color AS role_color
-    FROM users u LEFT JOIN roles r ON r.id = u.role_id
+           u.about, u.role_id, u.avatar_asset_id, u.submission_target, u.submission_item_id,
+           u.is_admin, u.is_approved, r.name AS role_name, r.color AS role_color,
+           wi.name AS submission_item_name
+    FROM users u
+    LEFT JOIN roles r ON r.id = u.role_id
+    LEFT JOIN inventory_items wi ON wi.id = u.submission_item_id
     WHERE u.id = $1
   `, [userId]);
   return rows[0] || null;
@@ -269,20 +280,30 @@ app.get('/api/staff', requireRole, asyncRoute(async (_req, res) => {
 }));
 
 app.get('/api/progress', requireRole, asyncRoute(async (_req, res) => {
-  const { rows } = await pool.query(`
-    SELECT u.id, u.display_name, u.submission_target, u.avatar_asset_id,
+  const weekStart = startOfCurrentWeek();
+  const [{ rows }, inventory] = await Promise.all([pool.query(`
+    SELECT u.id, u.display_name, u.submission_target, u.submission_item_id, u.avatar_asset_id,
            r.name AS role_name, r.color AS role_color,
            COALESCE(SUM(CASE WHEN s.status = 'approved' THEN s.amount ELSE 0 END), 0)::int AS approved_amount,
            COALESCE(SUM(CASE WHEN s.status = 'pending' THEN s.amount ELSE 0 END), 0)::int AS pending_amount
     FROM users u
     LEFT JOIN roles r ON r.id = u.role_id
     LEFT JOIN submissions s ON s.user_id = u.id
+      AND s.submitted_at >= $1
+      AND s.inventory_item_id = u.submission_item_id
     WHERE u.role_id IS NOT NULL OR u.is_admin = TRUE
-    GROUP BY u.id, u.display_name, u.submission_target, u.avatar_asset_id,
+    GROUP BY u.id, u.display_name, u.submission_target, u.submission_item_id, u.avatar_asset_id,
              r.name, r.color, r.priority
     ORDER BY COALESCE(r.priority, -1) DESC, u.display_name
-  `);
-  res.json({ progress: rows });
+  `, [weekStart]), pool.query('SELECT id, name FROM inventory_items')]);
+  const itemNames = new Map(inventory.rows.map((item) => [Number(item.id), item.name]));
+  res.json({
+    progress: rows.map((entry) => ({
+      ...entry,
+      submission_item_name: itemNames.get(Number(entry.submission_item_id)) || null,
+    })),
+    weekStart: weekStart.toISOString(),
+  });
 }));
 
 app.get('/api/submissions', requireRole, asyncRoute(async (req, res) => {
@@ -291,10 +312,12 @@ app.get('/api/submissions', requireRole, asyncRoute(async (req, res) => {
   const where = admin ? '' : 'WHERE s.user_id = $1';
   const { rows } = await pool.query(`
     SELECT s.id, s.amount, s.note, s.status, s.submitted_at, s.reviewed_at,
-           u.id AS user_id, u.display_name, reviewer.display_name AS reviewer_name
+           s.inventory_item_id, u.id AS user_id, u.display_name,
+           reviewer.display_name AS reviewer_name, item.name AS item_name
     FROM submissions s
     JOIN users u ON u.id = s.user_id
     LEFT JOIN users reviewer ON reviewer.id = s.reviewed_by
+    LEFT JOIN inventory_items item ON item.id = s.inventory_item_id
     ${where}
     ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END, s.submitted_at DESC
   `, values);
@@ -305,11 +328,14 @@ app.post('/api/submissions', requireRole, asyncRoute(async (req, res) => {
   const amount = intValue(req.body.amount);
   const note = trimmed(req.body.note, 500);
   if (amount <= 0 || amount > 1000000000) return res.status(400).json({ error: 'Bitte gib eine gültige Menge ein.' });
+  if (!req.user.submission_item_id) return res.status(400).json({ error: 'Für dich wurde noch keine Wochenabgabe eingestellt.' });
+  const item = await pool.query('SELECT id, name FROM inventory_items WHERE id = $1', [req.user.submission_item_id]);
+  if (!item.rows[0]) return res.status(400).json({ error: 'Der eingestellte Inventarartikel existiert nicht mehr.' });
   const { rows } = await pool.query(`
-    INSERT INTO submissions (user_id, amount, note) VALUES ($1, $2, $3)
-    RETURNING id, amount, note, status, submitted_at
-  `, [req.user.id, amount, note]);
-  res.status(201).json({ submission: rows[0] });
+    INSERT INTO submissions (user_id, inventory_item_id, amount, note) VALUES ($1, $2, $3, $4)
+    RETURNING id, inventory_item_id, amount, note, status, submitted_at
+  `, [req.user.id, item.rows[0].id, amount, note]);
+  res.status(201).json({ submission: { ...rows[0], item_name: item.rows[0].name } });
 }));
 
 app.get('/api/inventory', requireRole, asyncRoute(async (_req, res) => {
@@ -334,11 +360,18 @@ app.get('/api/admin/overview', requireAdmin, asyncRoute(async (_req, res) => {
   const [users, roles, submissions, inventory, menu, events, finance] = await Promise.all([
     pool.query(`SELECT u.id, u.username, u.display_name, u.first_name, u.last_name, u.gender,
                        u.age, u.birth_date, u.task_area, u.about,
-                       u.role_id, u.avatar_asset_id, u.submission_target, u.is_approved, u.is_admin, u.created_at,
-                       r.name AS role_name, r.color AS role_color
-                FROM users u LEFT JOIN roles r ON r.id = u.role_id ORDER BY u.created_at DESC`),
+                       u.role_id, u.avatar_asset_id, u.submission_target, u.submission_item_id,
+                       u.is_approved, u.is_admin, u.created_at,
+                       r.name AS role_name, r.color AS role_color, wi.name AS submission_item_name
+                FROM users u
+                LEFT JOIN roles r ON r.id = u.role_id
+                LEFT JOIN inventory_items wi ON wi.id = u.submission_item_id
+                ORDER BY u.created_at DESC`),
     pool.query('SELECT * FROM roles ORDER BY priority DESC, name'),
-    pool.query(`SELECT s.*, u.display_name FROM submissions s JOIN users u ON u.id = s.user_id
+    pool.query(`SELECT s.*, u.display_name, item.name AS item_name
+                FROM submissions s
+                JOIN users u ON u.id = s.user_id
+                LEFT JOIN inventory_items item ON item.id = s.inventory_item_id
                 ORDER BY CASE s.status WHEN 'pending' THEN 0 ELSE 1 END, s.submitted_at DESC`),
     pool.query('SELECT * FROM inventory_items ORDER BY name'),
     pool.query('SELECT * FROM menu_items ORDER BY name'),
@@ -383,17 +416,23 @@ app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   if (displayName.length > 100) return res.status(400).json({ error: 'Der vollständige IC-Name ist zu lang.' });
   if (!parsedBirthDate) return res.status(400).json({ error: 'Bitte gib ein gültiges IC-Geburtsdatum ein.' });
   if (!['male', 'female'].includes(gender)) return res.status(400).json({ error: 'Bitte wähle männlich oder weiblich.' });
+  const submissionItemId = optionalInt(req.body.submissionItemId);
+  if (submissionItemId) {
+    const item = await pool.query('SELECT id FROM inventory_items WHERE id = $1', [submissionItemId]);
+    if (!item.rows[0]) return res.status(400).json({ error: 'Der gewählte Inventarartikel existiert nicht.' });
+  }
   const { rows } = await pool.query(`
     UPDATE users SET username = $1, display_name = $1, first_name = $2, last_name = $3,
       gender = $4, age = $5, birth_date = $6, task_area = $7, about = $8,
-      role_id = $9, avatar_asset_id = $10, submission_target = $11, is_approved = TRUE, is_admin = $12
-    WHERE id = $13
+      role_id = $9, avatar_asset_id = $10, submission_target = $11, submission_item_id = $12,
+      is_approved = TRUE, is_admin = $13
+    WHERE id = $14
     RETURNING id, display_name, is_approved, is_admin
   `, [
     displayName, firstName, lastName, gender, ageFromBirthDate(parsedBirthDate), birthDate,
     trimmed(req.body.taskArea, 500), trimmed(req.body.about, 1200), optionalInt(req.body.roleId),
     optionalInt(req.body.avatarAssetId), Math.max(0, intValue(req.body.submissionTarget)),
-    isAdmin, userId,
+    submissionItemId, isAdmin, userId,
   ]);
   if (!rows[0]) return res.status(404).json({ error: 'Account nicht gefunden.' });
   res.json({ user: rows[0] });
@@ -410,12 +449,41 @@ app.delete('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => 
 app.patch('/api/admin/submissions/:id', requireAdmin, asyncRoute(async (req, res) => {
   const status = String(req.body.status || '');
   if (!['approved', 'rejected'].includes(status)) return res.status(400).json({ error: 'Ungültiger Status.' });
-  const { rows } = await pool.query(`
-    UPDATE submissions SET status = $1, reviewed_by = $2, reviewed_at = NOW()
-    WHERE id = $3 AND status = 'pending' RETURNING *
-  `, [status, req.user.id, intValue(req.params.id)]);
-  if (!rows[0]) return res.status(404).json({ error: 'Offene Abgabe nicht gefunden.' });
-  res.json({ submission: rows[0] });
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const { rows } = await client.query(`
+      UPDATE submissions SET status = $1, reviewed_by = $2, reviewed_at = NOW()
+      WHERE id = $3 AND status = 'pending' RETURNING *
+    `, [status, req.user.id, intValue(req.params.id)]);
+    if (!rows[0]) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Offene Abgabe nicht gefunden.' });
+    }
+    if (status === 'approved') {
+      if (!rows[0].inventory_item_id) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Dieser Abgabe ist kein Inventarartikel zugeordnet.' });
+      }
+      const inventory = await client.query(`
+        UPDATE inventory_items SET quantity = quantity + $1, updated_at = NOW()
+        WHERE id = $2 RETURNING id, name, quantity
+      `, [rows[0].amount, rows[0].inventory_item_id]);
+      if (!inventory.rows[0]) {
+        await client.query('ROLLBACK');
+        return res.status(409).json({ error: 'Der zugeordnete Inventarartikel existiert nicht mehr.' });
+      }
+      await client.query('COMMIT');
+      return res.json({ submission: rows[0], inventoryItem: inventory.rows[0] });
+    }
+    await client.query('COMMIT');
+    res.json({ submission: rows[0] });
+  } catch (error) {
+    await client.query('ROLLBACK');
+    throw error;
+  } finally {
+    client.release();
+  }
 }));
 
 app.post('/api/admin/roles', requireAdmin, asyncRoute(async (req, res) => {
@@ -460,7 +528,19 @@ function resourceRoutes({ pathName, table, fields, returning = '*' }) {
     res.json({ item: rows[0] });
   }));
   app.delete(`/api/admin/${pathName}/:id`, requireAdmin, asyncRoute(async (req, res) => {
-    const result = await pool.query(`DELETE FROM ${table} WHERE id = $1`, [intValue(req.params.id)]);
+    const itemId = intValue(req.params.id);
+    if (pathName === 'inventory') {
+      const assigned = await pool.query(`
+        SELECT COUNT(*)::int AS count FROM users WHERE submission_item_id = $1
+      `, [itemId]);
+      const pending = await pool.query(`
+        SELECT COUNT(*)::int AS count FROM submissions WHERE inventory_item_id = $1 AND status = 'pending'
+      `, [itemId]);
+      if (Number(assigned.rows[0].count) > 0 || Number(pending.rows[0].count) > 0) {
+        return res.status(409).json({ error: 'Dieser Artikel ist noch als Wochenabgabe zugewiesen oder Teil einer offenen Abgabe.' });
+      }
+    }
+    const result = await pool.query(`DELETE FROM ${table} WHERE id = $1`, [itemId]);
     if (!result.rowCount) return res.status(404).json({ error: 'Eintrag nicht gefunden.' });
     res.json({ ok: true });
   }));

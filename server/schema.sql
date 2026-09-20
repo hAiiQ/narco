@@ -67,6 +67,11 @@ CREATE TABLE IF NOT EXISTS inventory_items (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE users ADD COLUMN IF NOT EXISTS submission_item_id INTEGER;
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_submissions_inventory_item ON submissions (inventory_item_id);
+CREATE INDEX IF NOT EXISTS idx_submissions_week ON submissions (submitted_at, user_id, status);
+
 CREATE TABLE IF NOT EXISTS menu_items (
   id SERIAL PRIMARY KEY,
   name VARCHAR(120) NOT NULL,

@@ -168,6 +168,11 @@ input:hover, textarea:hover, select:hover { border-color: rgba(255,255,255,.28);
 
 .submit-panel { display: grid; grid-template-columns: 1fr auto; align-items: end; gap: 14px; margin-bottom: 22px; padding: 18px; }
 .submit-panel__fields { display: grid; grid-template-columns: minmax(130px,.35fr) minmax(220px,1fr); gap: 12px; }
+.week-summary { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; margin-bottom: 12px; background: var(--line); }
+.week-summary > div { padding: 16px 18px; background: var(--panel-strong); }
+.week-summary span { display: block; color: var(--muted); font-size: .7rem; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; }
+.week-summary strong { display: block; margin-top: 6px; color: var(--lime); font-size: 1.1rem; }
+.week-note { margin: -12px 0 20px; color: var(--orange); }
 .progress-list { display: grid; gap: 12px; }
 .progress-card { display: grid; grid-template-columns: minmax(170px, .55fr) minmax(260px, 1fr) auto; align-items: center; gap: 24px; padding: 18px 20px; border: 1px solid var(--line); background: rgba(12,16,22,.82); }
 .progress-person { display: flex; align-items: center; gap: 12px; min-width: 0; }
@@ -279,6 +284,7 @@ input:hover, textarea:hover, select:hover { border-color: rgba(255,255,255,.28);
   .welcome-card { min-height: 260px; padding: 24px; }
   .submit-panel { grid-template-columns: 1fr; }
   .submit-panel__fields { grid-template-columns: 1fr; }
+  .week-summary { grid-template-columns: 1fr; }
   .progress-card { grid-template-columns: 1fr; gap: 15px; }
   .progress-value { grid-column: 1; text-align: left; }
   .activity-row { grid-template-columns: 1fr auto; }
