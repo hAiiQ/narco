@@ -12,9 +12,10 @@ Ein vollständiges, responsives Mitarbeiter- und Verwaltungsportal für die Tequ
 - Ohne zugewiesene Rolle bleibt das Portal gesperrt; Rollen werden im Adminbereich vergeben
 - Der IC-Account `Michael Black` erhält automatisch Adminrechte und die Inhaber-Rolle
 - Mitarbeiterprofile mit Name, Rolle, Alter, Geburtsdatum, Aufgabenbereich, Info und Profilbild
-- Einstellbare Wochenabgabe pro Mitarbeiter mit Inventarartikel und Wochenziel
-- Wöchentlicher Fortschritt mit automatischem Reset am Montag
-- Bestätigte Wochenabgaben werden automatisch und ohne Doppelbuchung ins Inventar übernommen
+- Frei einstellbare Abgabezeiträume mit Start, Ende und Ziel pro Mitarbeiter
+- Abgaben können Geld, Schwarzgeld oder einen frei gewählten Inventarartikel betreffen
+- Jeder Mitarbeiter trägt seine Abgabe selbst ein; Fortschritt und noch offene Beträge sind für alle sichtbar
+- Bestätigte Abgaben werden automatisch und ohne Doppelbuchung dem Geld, Schwarzgeld oder Inventar gutgeschrieben
 - Inventar mit Bildern, Mengen, Geld und Schwarzgeld
 - Speisekarte mit Bildern, Preisen und Verfügbarkeit
 - Eventübersicht mit Termin, Ort, Beschreibung und Bild

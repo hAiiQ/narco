@@ -72,6 +72,24 @@ ALTER TABLE submissions ADD COLUMN IF NOT EXISTS inventory_item_id INTEGER;
 CREATE INDEX IF NOT EXISTS idx_submissions_inventory_item ON submissions (inventory_item_id);
 CREATE INDEX IF NOT EXISTS idx_submissions_week ON submissions (submitted_at, user_id, status);
 
+CREATE TABLE IF NOT EXISTS contribution_campaigns (
+  id SERIAL PRIMARY KEY,
+  name VARCHAR(140) NOT NULL,
+  resource_type VARCHAR(16) NOT NULL CHECK (resource_type IN ('cash', 'dirty_cash', 'item')),
+  inventory_item_id INTEGER REFERENCES inventory_items(id) ON DELETE RESTRICT,
+  target_amount BIGINT NOT NULL CHECK (target_amount > 0),
+  starts_at TIMESTAMPTZ NOT NULL,
+  ends_at TIMESTAMPTZ NOT NULL,
+  created_by INTEGER REFERENCES users(id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  CHECK (ends_at > starts_at)
+);
+
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS campaign_id INTEGER;
+CREATE INDEX IF NOT EXISTS idx_campaigns_period ON contribution_campaigns (starts_at, ends_at);
+CREATE INDEX IF NOT EXISTS idx_submissions_campaign_user ON submissions (campaign_id, user_id, status);
+
 CREATE TABLE IF NOT EXISTS menu_items (
   id SERIAL PRIMARY KEY,
   name VARCHAR(120) NOT NULL,

@@ -70,6 +70,25 @@ function formatMoney(value) {
   return `${formatNumber(value)} $`;
 }
 
+function resourceLabel(type, itemName = '') {
+  if (type === 'cash') return 'Geld';
+  if (type === 'dirty_cash') return 'Schwarzgeld';
+  return itemName || 'Inventarartikel';
+}
+
+function formatContribution(value, type, itemName = '') {
+  return type === 'cash' || type === 'dirty_cash'
+    ? formatMoney(value)
+    : `${formatNumber(value)} × ${itemName || 'Artikel'}`;
+}
+
+function campaignState(campaign) {
+  const now = Date.now();
+  if (new Date(campaign.starts_at).getTime() > now) return 'Geplant';
+  if (new Date(campaign.ends_at).getTime() < now) return 'Beendet';
+  return 'Aktiv';
+}
+
 function formatDate(value, options = { dateStyle: 'medium' }) {
   if (!value) return 'Nicht angegeben';
   const date = new Date(value);
@@ -265,13 +284,14 @@ function loadingCards(count = 4) {
 }
 
 async function renderRoute(route) {
+  els.content.scrollTop = 0;
   els.content.innerHTML = `<section class="page-section">${loadingCards()}</section>`;
   try {
     if (route === 'dashboard') return renderDashboard(await api('/api/dashboard'));
     if (route === 'staff') return renderStaff(await api('/api/staff'));
     if (route === 'progress') {
       const [progress, submissions] = await Promise.all([api('/api/progress'), api('/api/submissions')]);
-      return renderProgress(progress.progress, submissions.submissions, progress.weekStart);
+      return renderProgress(progress, submissions.submissions);
     }
     if (route === 'inventory') return renderInventory(await api('/api/inventory'));
     if (route === 'menu') return renderMenu((await api('/api/menu')).items);
@@ -349,41 +369,54 @@ function renderStaff(data) {
     </section>`;
 }
 
-function renderProgress(progress, submissions, weekStart) {
-  const own = progress.find((entry) => Number(entry.id) === Number(state.user.id));
-  const canSubmit = Boolean(own?.submission_item_id);
+function renderProgress(data, submissions) {
+  const { campaigns, progress } = data;
+  const canSubmit = campaigns.length > 0;
+  const ownProgress = progress.filter((entry) => Number(entry.id) === Number(state.user.id));
   els.content.innerHTML = `
     <section class="page-section">
-      ${sectionHead('Wochenabgaben', `Aktuelle Woche ab ${formatDate(weekStart)}`)}
-      <div class="panel week-summary">
-        <div><span>Deine Wochenabgabe</span><strong>${escapeHtml(own?.submission_item_name || 'Noch nicht eingestellt')}</strong></div>
-        <div><span>Wochenziel</span><strong>${formatNumber(own?.submission_target || 0)}</strong></div>
+      ${sectionHead('Abgabezeiträume', campaigns.length ? `${campaigns.length} aktuell aktive Vorgabe${campaigns.length === 1 ? '' : 'n'}` : 'Derzeit ist kein Abgabezeitraum aktiv')}
+      <div class="campaign-summary-grid">
+        ${campaigns.length ? campaigns.map((campaign) => {
+          const own = ownProgress.find((entry) => Number(entry.campaign_id) === Number(campaign.id));
+          return `<article class="panel campaign-summary">
+            <div><span>${escapeHtml(resourceLabel(campaign.resource_type, campaign.item_name))}</span><strong>${escapeHtml(campaign.name)}</strong></div>
+            <b>${formatContribution(own?.approved_amount || 0, campaign.resource_type, campaign.item_name)} / ${formatContribution(campaign.target_amount, campaign.resource_type, campaign.item_name)}</b>
+            <small>${formatDate(campaign.starts_at)} – ${formatDate(campaign.ends_at)}</small>
+          </article>`;
+        }).join('') : emptyState('↗', 'Keine aktive Abgabe', 'Ein Admin kann im Adminbereich einen neuen Zeitraum mit Ziel anlegen.')}
       </div>
       <form id="submission-form" class="panel submit-panel">
-        <div class="submit-panel__fields">
+        <div class="submit-panel__fields submit-panel__fields--campaign">
+          <label>Abgabe<select name="campaignId" required ${canSubmit ? '' : 'disabled'}>${campaigns.map((campaign) => `<option value="${campaign.id}">${escapeHtml(campaign.name)} · ${escapeHtml(resourceLabel(campaign.resource_type, campaign.item_name))}</option>`).join('')}</select></label>
           <label>Menge<input name="amount" type="number" min="1" max="1000000000" required placeholder="0" ${canSubmit ? '' : 'disabled'} /></label>
           <label>Notiz<textarea name="note" rows="1" placeholder="Optionale Notiz" ${canSubmit ? '' : 'disabled'}></textarea></label>
         </div>
         <button class="button button--primary" type="submit" ${canSubmit ? '' : 'disabled'}>Abgabe eintragen</button>
       </form>
-      ${canSubmit ? '' : '<p class="form-note week-note">Ein Admin muss dir zuerst einen Inventarartikel als Wochenabgabe zuweisen.</p>'}
-      <div class="progress-list">
-        ${progress.length ? progress.map((entry) => {
-          const approved = Number(entry.approved_amount || 0);
-          const target = Number(entry.submission_target || 0);
-          const percent = target > 0 ? Math.min(100, Math.round((approved / target) * 100)) : 0;
-          const roleColor = color(entry.role_color);
-          return `<article class="progress-card" style="--role:${roleColor}">
-            <div class="progress-person"><div class="mini-avatar" style="${avatarStyle(entry.avatar_asset_id)}">${entry.avatar_asset_id ? '' : escapeHtml(initials(entry.display_name))}</div><div><strong>${escapeHtml(entry.display_name)}</strong><span>${escapeHtml(entry.role_name || 'Crew')} · ${escapeHtml(entry.submission_item_name || 'Keine Wochenabgabe')}</span></div></div>
-            <div><div class="progress-track"><i style="--progress:${percent}%"></i></div><div class="progress-stats"><span>${percent}% erreicht</span><span>${Number(entry.pending_amount) > 0 ? `${formatNumber(entry.pending_amount)} ausstehend` : 'Keine offenen Einträge'}</span></div></div>
-            <div class="progress-value"><strong>${formatNumber(approved)} / ${formatNumber(target)}</strong><span>diese Woche</span></div>
-          </article>`;
-        }).join('') : emptyState('↗', 'Noch kein Fortschritt', 'Sobald Accounts eine Rolle haben, erscheinen sie hier.')}
-      </div>
+      ${campaigns.map((campaign) => {
+        const entries = progress.filter((entry) => Number(entry.campaign_id) === Number(campaign.id));
+        return `<section class="campaign-block">
+          <div class="campaign-block__head"><div><p class="eyebrow">${escapeHtml(resourceLabel(campaign.resource_type, campaign.item_name))}</p><h3>${escapeHtml(campaign.name)}</h3></div><span>${formatDate(campaign.starts_at)} – ${formatDate(campaign.ends_at)}</span></div>
+          <div class="progress-list">
+            ${entries.map((entry) => {
+              const approved = Number(entry.approved_amount || 0);
+              const target = Number(entry.target_amount || 0);
+              const percent = target > 0 ? Math.min(100, Math.round((approved / target) * 100)) : 0;
+              const pending = Number(entry.pending_amount || 0);
+              return `<article class="progress-card" style="--role:${color(entry.role_color)}">
+                <div class="progress-person"><div class="mini-avatar" style="${avatarStyle(entry.avatar_asset_id)}">${entry.avatar_asset_id ? '' : escapeHtml(initials(entry.display_name))}</div><div><strong>${escapeHtml(entry.display_name)}</strong><span>${escapeHtml(entry.role_name || 'Crew')}</span></div></div>
+                <div><div class="progress-track"><i style="--progress:${percent}%"></i></div><div class="progress-stats"><span>${percent}% erreicht</span><span>${pending > 0 ? `${formatContribution(pending, entry.resource_type, entry.item_name)} wartet` : 'Keine offene Buchung'}</span></div></div>
+                <div class="progress-value"><strong>${formatContribution(approved, entry.resource_type, entry.item_name)} / ${formatContribution(target, entry.resource_type, entry.item_name)}</strong><span>bestätigt</span></div>
+              </article>`;
+            }).join('')}
+          </div>
+        </section>`;
+      }).join('')}
       <div class="panel" style="margin-top:24px">
         <div class="panel__head"><h3>${state.user.is_admin ? 'Alle Abgaben' : 'Meine Einträge'}</h3><span class="muted">${submissions.length} Einträge</span></div>
         <div class="panel__body activity-list">
-          ${submissions.length ? submissions.slice(0, 20).map((entry) => `<div class="activity-row"><strong>${escapeHtml(entry.display_name || state.user.display_name)}</strong><span>${formatNumber(entry.amount)} × ${escapeHtml(entry.item_name || 'Artikel')}</span><span>${escapeHtml(entry.note || 'Ohne Notiz')}</span><span class="status-badge status-badge--${escapeHtml(entry.status)}">${statusText(entry.status)}</span></div>`).join('') : emptyState('↗', 'Noch keine Abgaben', 'Dein erster Eintrag wird hier angezeigt.')}
+          ${submissions.length ? submissions.slice(0, 20).map((entry) => `<div class="activity-row"><strong>${escapeHtml(entry.display_name || state.user.display_name)}</strong><span>${formatContribution(entry.amount, entry.resource_type, entry.item_name)}</span><span><b>${escapeHtml(entry.campaign_name || 'Alter Eintrag')}</b> · ${escapeHtml(entry.note || 'Ohne Notiz')}</span><span class="status-badge status-badge--${escapeHtml(entry.status)}">${statusText(entry.status)}</span></div>`).join('') : emptyState('↗', 'Noch keine Abgaben', 'Dein erster Eintrag wird hier angezeigt.')}
         </div>
       </div>
     </section>`;
@@ -404,7 +437,6 @@ function renderProgress(progress, submissions, weekStart) {
       button.disabled = false;
     }
   });
-
 }
 
 function statusText(status) {
@@ -505,7 +537,7 @@ function adminUsers() {
   const d = state.adminData;
   return `<div class="panel"><div class="panel__head"><h3>Accounts</h3><span class="muted">${d.users.length} gesamt</span></div><div class="panel__body admin-list">
     ${d.users.map((user) => `<div class="admin-row">
-      <div class="admin-row__name"><div class="mini-avatar" style="--role:${color(user.role_color)};${avatarStyle(user.avatar_asset_id)}">${user.avatar_asset_id ? '' : escapeHtml(initials(user.display_name))}</div><div><strong>${escapeHtml(user.display_name)}</strong><span>${escapeHtml(user.submission_item_name || 'Keine Wochenabgabe')} · Ziel ${formatNumber(user.submission_target)}</span></div></div>
+      <div class="admin-row__name"><div class="mini-avatar" style="--role:${color(user.role_color)};${avatarStyle(user.avatar_asset_id)}">${user.avatar_asset_id ? '' : escapeHtml(initials(user.display_name))}</div><div><strong>${escapeHtml(user.display_name)}</strong><span>${escapeHtml(user.task_area || 'Kein Aufgabenbereich eingetragen')}</span></div></div>
       <span class="role-badge" style="--role:${color(user.role_color)}">${escapeHtml(user.role_name || 'Keine Rolle')}</span>
       <span class="status-badge status-badge--${user.role_id || user.is_admin ? 'approved' : 'pending'}">${user.role_id || user.is_admin ? 'Aktiv' : 'Ohne Rolle'}</span>
       <div class="admin-row__actions"><button class="button button--small" data-edit="user" data-id="${user.id}">Bearbeiten</button>${Number(user.id) !== Number(state.user.id) ? `<button class="button button--small button--danger" data-delete="user" data-id="${user.id}">Löschen</button>` : ''}</div>
@@ -515,8 +547,16 @@ function adminUsers() {
 
 function adminSubmissions() {
   const rows = state.adminData.submissions;
-  return `<div class="panel"><div class="panel__head"><h3>Abgaben prüfen</h3><span class="muted">${rows.filter((item) => item.status === 'pending').length} offen</span></div><div class="panel__body admin-list">
-    ${rows.length ? rows.map((item) => `<div class="admin-row"><div class="admin-row__name"><div><strong>${escapeHtml(item.display_name)}</strong><span>${formatDate(item.submitted_at, { dateStyle: 'medium', timeStyle: 'short' })} · ${escapeHtml(item.note || 'Ohne Notiz')}</span></div></div><strong>${formatNumber(item.amount)} × ${escapeHtml(item.item_name || 'Artikel')}</strong><span class="status-badge status-badge--${escapeHtml(item.status)}">${statusText(item.status)}</span><div class="admin-row__actions">${item.status === 'pending' ? `<button class="button button--small" data-review="approved" data-id="${item.id}">Bestätigen</button><button class="button button--small button--danger" data-review="rejected" data-id="${item.id}">Ablehnen</button>` : ''}</div></div>`).join('') : emptyState('↗', 'Keine Abgaben', 'Eingetragene Abgaben erscheinen hier.')}
+  const campaigns = state.adminData.campaigns;
+  return `<div class="panel"><div class="panel__head"><h3>Abgabezeiträume</h3><button class="button button--primary button--small" data-edit="campaign">Zeitraum anlegen</button></div><div class="panel__body admin-list">
+    ${campaigns.length ? campaigns.map((campaign) => {
+      const status = campaignState(campaign);
+      const statusClass = status === 'Aktiv' ? 'approved' : status === 'Geplant' ? 'pending' : 'rejected';
+      return `<div class="admin-row"><div class="admin-row__name"><div><strong>${escapeHtml(campaign.name)}</strong><span>${formatContribution(campaign.target_amount, campaign.resource_type, campaign.item_name)} · ${formatDate(campaign.starts_at)} – ${formatDate(campaign.ends_at)}</span></div></div><strong>${formatContribution(campaign.target_amount, campaign.resource_type, campaign.item_name)}</strong><span class="status-badge status-badge--${statusClass}">${status}</span><div class="admin-row__actions"><button class="button button--small" data-edit="campaign" data-id="${campaign.id}">Bearbeiten</button><button class="button button--small button--danger" data-delete="campaign" data-id="${campaign.id}">Löschen</button></div></div>`;
+    }).join('') : emptyState('+', 'Noch kein Abgabezeitraum', 'Lege zum Beispiel eine Woche mit 500.000 $ Ziel an.')}
+  </div></div>
+  <div class="panel admin-submissions-panel"><div class="panel__head"><h3>Abgaben prüfen</h3><span class="muted">${rows.filter((item) => item.status === 'pending').length} offen</span></div><div class="panel__body admin-list">
+    ${rows.length ? rows.map((item) => `<div class="admin-row"><div class="admin-row__name"><div><strong>${escapeHtml(item.display_name)}</strong><span>${escapeHtml(item.campaign_name || 'Alter Eintrag')} · ${formatDate(item.submitted_at, { dateStyle: 'medium', timeStyle: 'short' })} · ${escapeHtml(item.note || 'Ohne Notiz')}</span></div></div><strong>${formatContribution(item.amount, item.resource_type, item.item_name)}</strong><span class="status-badge status-badge--${escapeHtml(item.status)}">${statusText(item.status)}</span><div class="admin-row__actions">${item.status === 'pending' ? `<button class="button button--small" data-review="approved" data-id="${item.id}">Bestätigen</button><button class="button button--small button--danger" data-review="rejected" data-id="${item.id}">Ablehnen</button>` : ''}</div></div>`).join('') : emptyState('↗', 'Keine Abgaben', 'Eingetragene Abgaben erscheinen hier.')}
   </div></div>`;
 }
 
@@ -589,6 +629,7 @@ function openEditor(type, id) {
   const d = state.adminData;
   if (type === 'user') return userEditor(d.users.find((item) => Number(item.id) === id));
   if (type === 'role') return roleEditor(d.roles.find((item) => Number(item.id) === id));
+  if (type === 'campaign') return campaignEditor(d.campaigns.find((item) => Number(item.id) === id));
   const collection = type === 'events' ? d.events : d[type];
   return resourceEditor(type, collection.find((item) => Number(item.id) === id));
 }
@@ -601,14 +642,30 @@ function userEditor(user) {
       <label>IC Geburtsdatum<input name="birthDate" type="date" required value="${user.birth_date ? new Date(user.birth_date).toISOString().slice(0, 10) : ''}" /></label>
       <label>Geschlecht<select name="gender" required><option value="male" ${user.gender === 'male' ? 'selected' : ''}>Männlich</option><option value="female" ${user.gender === 'female' ? 'selected' : ''}>Weiblich</option></select></label>
       <label>Rolle<select name="roleId"><option value="">Keine Rolle</option>${state.adminData.roles.map((role) => `<option value="${role.id}" ${Number(role.id) === Number(user.role_id) ? 'selected' : ''}>${escapeHtml(role.name)}</option>`).join('')}</select></label>
-      <label>Wochenabgabe<select name="submissionItemId"><option value="">Nicht eingestellt</option>${state.adminData.inventory.map((item) => `<option value="${item.id}" ${Number(item.id) === Number(user.submission_item_id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>
-      <label>Wochenziel (Menge)<input name="submissionTarget" type="number" min="0" value="${Number(user.submission_target || 0)}" /></label>
       <label>Profilbild<input name="image" type="file" accept="image/png,image/jpeg,image/webp,image/gif" /></label>
     </div>
     <label>Aufgabenbereich<input name="taskArea" value="${escapeHtml(user.task_area || '')}" placeholder="z. B. Barleitung und Einkauf" /></label>
     <label>Weitere Informationen<textarea name="about">${escapeHtml(user.about || '')}</textarea></label>
     <label class="checkbox"><input name="isAdmin" type="checkbox" ${user.is_admin ? 'checked' : ''} /> Adminrechte</label>
     <input name="avatarAssetId" type="hidden" value="${user.avatar_asset_id || ''}" />
+    <div class="modal__actions"><button class="button button--ghost" type="button" data-close-modal>Abbrechen</button><button class="button button--primary" type="submit">Speichern</button></div>
+  </form>`);
+  bindEditorForm();
+}
+
+function campaignEditor(campaign) {
+  const now = new Date();
+  const nextWeek = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+  openModal(campaign ? 'Abgabezeitraum bearbeiten' : 'Abgabezeitraum anlegen', `<form id="editor-form" data-type="campaign" data-id="${campaign?.id || ''}">
+    <label>Name<input name="name" required maxlength="140" value="${escapeHtml(campaign?.name || 'Wochenabgabe')}" placeholder="z. B. Wochenabgabe 38" /></label>
+    <div class="form-grid form-grid--two">
+      <label>Art<select name="resourceType" required><option value="cash" ${campaign?.resource_type === 'cash' ? 'selected' : ''}>Geld</option><option value="dirty_cash" ${campaign?.resource_type === 'dirty_cash' ? 'selected' : ''}>Schwarzgeld</option><option value="item" ${campaign?.resource_type === 'item' ? 'selected' : ''}>Inventarartikel</option></select></label>
+      <label>Ziel pro Mitarbeiter<input name="targetAmount" type="number" min="1" max="1000000000000" required value="${Number(campaign?.target_amount || 500000)}" /></label>
+      <label>Start<input name="startsAt" type="datetime-local" required value="${inputDate(campaign?.starts_at || now)}" /></label>
+      <label>Ende<input name="endsAt" type="datetime-local" required value="${inputDate(campaign?.ends_at || nextWeek)}" /></label>
+    </div>
+    <label>Inventarartikel <span class="muted">(nur bei Art „Inventarartikel“)</span><select name="inventoryItemId"><option value="">Bitte wählen</option>${state.adminData.inventory.map((item) => `<option value="${item.id}" ${Number(item.id) === Number(campaign?.inventory_item_id) ? 'selected' : ''}>${escapeHtml(item.name)}</option>`).join('')}</select></label>
+    <p class="form-note">Das Ziel gilt einzeln für jeden Mitarbeiter. Bestätigte Einträge werden automatisch als Geld, Schwarzgeld oder Artikel gebucht.</p>
     <div class="modal__actions"><button class="button button--ghost" type="button" data-close-modal>Abbrechen</button><button class="button button--primary" type="submit">Speichern</button></div>
   </form>`);
   bindEditorForm();
@@ -659,6 +716,10 @@ async function saveEditor(event) {
     values.available = form.elements.available ? Boolean(form.elements.available.checked) : undefined;
     delete values.image;
     const type = form.dataset.type;
+    if (type === 'campaign') {
+      values.startsAt = new Date(values.startsAt).toISOString();
+      values.endsAt = new Date(values.endsAt).toISOString();
+    }
     const id = form.dataset.id;
     const endpointType = type === 'user' ? 'users' : type;
     const method = id ? 'PUT' : 'POST';
@@ -688,7 +749,7 @@ async function reviewSubmission(id, status) {
   try {
     const result = await api(`/api/admin/submissions/${id}`, { method: 'PATCH', body: { status } });
     toast(status === 'approved'
-      ? `${formatNumber(result.submission.amount)} × ${result.inventoryItem?.name || 'Artikel'} ins Inventar gebucht.`
+      ? `${formatContribution(result.submission.amount, result.booking?.type, result.booking?.name)} als ${result.booking?.name || 'Abgabe'} gebucht.`
       : 'Abgabe abgelehnt.');
     await loadAdmin();
   } catch (error) {
@@ -711,22 +772,24 @@ function registerWebMcpTools() {
   Promise.resolve(context.registerTool({
     name: 'submit_delivery',
     title: 'Abgabe eintragen',
-    description: 'Trägt die eingestellte Wochenabgabe für den aktuell angemeldeten Account ein. Nach Admin-Bestätigung wird sie dem Inventar hinzugefügt.',
+    description: 'Trägt eine Abgabe für einen aktiven Zeitraum ein. Nach Admin-Bestätigung wird sie dem persönlichen Fortschritt und dem passenden Bestand gutgeschrieben.',
     inputSchema: {
       type: 'object',
       properties: {
+        campaignId: { type: 'integer', minimum: 1, description: 'ID des aktiven Abgabezeitraums' },
         amount: { type: 'integer', minimum: 1, description: 'Abgabemenge' },
         note: { type: 'string', maxLength: 500, description: 'Kurze Beschreibung der Abgabe' },
       },
-      required: ['amount'],
+      required: ['campaignId', 'amount'],
       additionalProperties: false,
     },
     annotations: { readOnlyHint: false, untrustedContentHint: false },
     async execute(input) {
+      if (!Number.isInteger(input?.campaignId) || input.campaignId <= 0) throw new Error('campaignId muss die ID eines aktiven Abgabezeitraums sein.');
       if (!Number.isInteger(input?.amount) || input.amount <= 0) throw new Error('amount muss eine positive ganze Zahl sein.');
-      const result = await api('/api/submissions', { method: 'POST', body: { amount: input.amount, note: String(input.note || '').slice(0, 500) } });
+      const result = await api('/api/submissions', { method: 'POST', body: { campaignId: input.campaignId, amount: input.amount, note: String(input.note || '').slice(0, 500) } });
       if (state.route === 'progress') await renderRoute('progress');
-      return { id: result.submission.id, status: result.submission.status, amount: result.submission.amount, itemName: result.submission.item_name };
+      return { id: result.submission.id, status: result.submission.status, amount: result.submission.amount, campaignName: result.submission.campaign_name, resourceType: result.submission.resource_type };
     },
   }, { signal: controller.signal })).catch(() => controller.abort());
 }
