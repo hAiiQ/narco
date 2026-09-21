@@ -483,6 +483,18 @@ app.post('/api/admin/assets', requireAdmin, upload.single('image'), asyncRoute(a
   });
 }));
 
+async function deleteAssetIfUnused(assetId) {
+  if (!assetId) return;
+  await pool.query(`
+    DELETE FROM assets
+    WHERE id = $1
+      AND NOT EXISTS (SELECT 1 FROM users WHERE avatar_asset_id = $1)
+      AND NOT EXISTS (SELECT 1 FROM inventory_items WHERE image_asset_id = $1)
+      AND NOT EXISTS (SELECT 1 FROM menu_items WHERE image_asset_id = $1)
+      AND NOT EXISTS (SELECT 1 FROM events WHERE image_asset_id = $1)
+  `, [assetId]);
+}
+
 app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   const userId = intValue(req.params.id);
   const firstName = trimmed(req.body.firstName, 80);
@@ -502,6 +514,9 @@ app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   if (displayName.length > 100) return res.status(400).json({ error: 'Der vollständige IC-Name ist zu lang.' });
   if (!parsedBirthDate) return res.status(400).json({ error: 'Bitte gib ein gültiges IC-Geburtsdatum ein.' });
   if (!['male', 'female'].includes(gender)) return res.status(400).json({ error: 'Bitte wähle männlich oder weiblich.' });
+  const previous = await pool.query('SELECT avatar_asset_id FROM users WHERE id = $1', [userId]);
+  if (!previous.rows[0]) return res.status(404).json({ error: 'Account nicht gefunden.' });
+  const avatarAssetId = optionalInt(req.body.avatarAssetId);
   const { rows } = await pool.query(`
     UPDATE users SET username = $1, display_name = $1, first_name = $2, last_name = $3,
       gender = $4, age = $5, birth_date = $6, task_area = $7, about = $8,
@@ -511,9 +526,11 @@ app.put('/api/admin/users/:id', requireAdmin, asyncRoute(async (req, res) => {
   `, [
     displayName, firstName, lastName, gender, ageFromBirthDate(parsedBirthDate), birthDate,
     trimmed(req.body.taskArea, 500), trimmed(req.body.about, 1200), optionalInt(req.body.roleId),
-    optionalInt(req.body.avatarAssetId), isAdmin, userId,
+    avatarAssetId, isAdmin, userId,
   ]);
-  if (!rows[0]) return res.status(404).json({ error: 'Account nicht gefunden.' });
+  if (previous.rows[0].avatar_asset_id && Number(previous.rows[0].avatar_asset_id) !== Number(avatarAssetId)) {
+    await deleteAssetIfUnused(previous.rows[0].avatar_asset_id);
+  }
   res.json({ user: rows[0] });
 }));
 

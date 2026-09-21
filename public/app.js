@@ -700,6 +700,7 @@ function userEditor(user) {
     </div>
     <label>Aufgabenbereich<input name="taskArea" value="${escapeHtml(user.task_area || '')}" placeholder="z. B. Barleitung und Einkauf" /></label>
     <label>Weitere Informationen<textarea name="about">${escapeHtml(user.about || '')}</textarea></label>
+    ${user.avatar_asset_id ? '<label class="checkbox"><input name="removeAvatar" type="checkbox" /> Profilbild entfernen</label>' : ''}
     <label class="checkbox"><input name="isAdmin" type="checkbox" ${user.is_admin ? 'checked' : ''} /> Adminrechte</label>
     <input name="avatarAssetId" type="hidden" value="${user.avatar_asset_id || ''}" />
     <div class="modal__actions"><button class="button button--ghost" type="button" data-close-modal>Abbrechen</button><button class="button button--primary" type="submit">Speichern</button></div>
@@ -770,9 +771,11 @@ async function saveEditor(event) {
       if (form.dataset.type === 'user') values.avatarAssetId = assetId;
       else values.imageAssetId = assetId;
     }
+    if (form.dataset.type === 'user' && form.elements.removeAvatar?.checked && !assetId) values.avatarAssetId = '';
     values.isAdmin = Boolean(form.elements.isAdmin?.checked);
     values.available = form.elements.available ? Boolean(form.elements.available.checked) : undefined;
     delete values.image;
+    delete values.removeAvatar;
     const type = form.dataset.type;
     if (type === 'campaign') {
       values.startsAt = new Date(values.startsAt).toISOString();
